@@ -138,3 +138,25 @@ class PeerDataPoint(Base):
     apr: Mapped[float | None] = mapped_column(Float, nullable=True)
     chose_alternative: Mapped[bool] = mapped_column(default=False)  # walked away / picked something cheaper
     satisfaction: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 1-5, from journal follow-up
+
+
+class ChatMessage(Base):
+    """Every message to and from Mercer, per browser session."""
+    __tablename__ = "chat_messages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    session_id: Mapped[str] = mapped_column(String(64), index=True)
+    role: Mapped[str] = mapped_column(String(8))          # "user" | "bot"
+    content: Mapped[str] = mapped_column(Text)
+    intent: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    ai: Mapped[bool] = mapped_column(default=False)        # True if the AI rewrote the reply
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ChatMemory(Base):
+    """What Mercer remembers about a session: name, goals, budgets, facts."""
+    __tablename__ = "chat_memory"
+
+    session_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    data: Mapped[dict] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

@@ -63,3 +63,27 @@ def write_narrative(decision_summary: dict, report: dict) -> str | None:
     except Exception as exc:  # network, auth, rate limit, missing package...
         log.warning("LLM narrative failed, returning report without it: %s", exc)
         return None
+
+
+def chat_complete(system: str, messages: list[dict], max_tokens: int = 350) -> str | None:
+    """Generic chat call used by Mercer's /chat. Returns None if no key or on any error."""
+    if not (settings.openai_api_key or settings.anthropic_api_key):
+        return None
+    try:
+        if settings.openai_api_key:
+            from openai import OpenAI
+
+            client = OpenAI(api_key=settings.openai_api_key)
+            resp = client.chat.completions.create(
+                model=settings.openai_model, max_tokens=max_tokens, temperature=0.3,
+                messages=[{"role": "system", "content": system}, *messages],
+            )
+            return (resp.choices[0].message.content or "").strip() or None
+        import anthropic
+
+        client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+        msg = client.messages.create(model=settings.anthropic_model, max_tokens=max_tokens, system=system, messages=messages)
+        return "".join(b.text for b in msg.content if b.type == "text").strip() or None
+    except Exception as exc:
+        log.warning("chat_complete failed, using grounded local reply: %s", exc)
+        return None

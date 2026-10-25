@@ -137,3 +137,23 @@ class JournalOut(BaseModel):
 class OutcomeUpdate(BaseModel):
     outcome_rating: int = Field(ge=1, le=5)
     outcome_note: str | None = Field(default=None, max_length=2000)
+
+
+# ---------- Mercer chat ----------
+class ChatIn(BaseModel):
+    session_id: str = Field(min_length=3, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    message: str = Field(min_length=1, max_length=500)
+    local_reply: str = Field(min_length=1, max_length=4000, description="Grounded answer computed in the browser from the account data")
+    intent: str | None = Field(default=None, max_length=32)
+    memory: dict | None = None
+
+
+class ChatOut(BaseModel):
+    reply: str
+    ai: bool
+
+
+class ChatHistoryOut(BaseModel):
+    session_id: str
+    memory: dict
+    messages: list[dict]

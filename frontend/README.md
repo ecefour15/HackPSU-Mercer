@@ -1,38 +1,69 @@
-# Mercer — FNB money assistant (frontend concept)
+# Mercer — FNB money assistant
 
-A popup AI assistant on top of a First National Bank page, in two versions:
+A popup AI money guide on top of a First National Bank page, in two versions:
 
 | File | What it is |
 |---|---|
-| `index.html` | Website: bank accounts page + "Ask Mercer" button bottom-right that opens a popup |
-| `phone.html` | Mobile app: FNB app screen + floating Mercer button that toggles the popup |
-| `mercer.js` | The assistant itself, shared by both pages (all tools, chat, light/dark mode) |
-| `mercer.css` | Shared styles, colors (FNB navy `#003876`, crimson `#A80532`), and animations |
+| `index.html` | Website: accounts page + "Ask Mercer" popup |
+| `phone.html` | Mobile app: floating Mercer button that opens/collapses the chat |
+| `mercer.js` / `mercer.css` | The assistant UI, shared by both pages (11 tools, chat, light/dark mode) |
+| `brain.js` | Mercer's brain: understands questions, answers from the data, remembers |
+| `data.js` | Mercer's database, generated from the team's synthetic dataset |
+| `build_data.py` | Regenerates `data.js` (run from repo root: `python3 frontend/build_data.py`, needs pandas + openpyxl) |
+| `vendor/` | Preact 10.24.3 + htm 3.1.1, bundled so it works offline |
 
 ## Run it
 
-No install or build step. Just open a file in your browser:
+No install or build step. From the repo root:
 
 ```bash
-open frontend/index.html     # website (Mac)
-open frontend/phone.html     # phone app
+open frontend/phone.html
+open frontend/index.html
 ```
 
-It needs internet once to load Preact, htm and the fonts from a CDN.
-To try the phone version on your actual phone, serve the folder (`cd frontend && python3 -m http.server 8080`)
-and open `http://<your-laptop-ip>:8080/phone.html` on the same Wi-Fi.
+Works offline. Shareable link: turn on GitHub Pages (Settings → Pages → main, / root), then
+`https://ecefour15.github.io/HackPSU-Team-LARP-/frontend/phone.html`.
 
-## Mercer's tools
+## How the chat works
 
-Chat · Safe to spend · Budget (green/red + pixel face) · Credit score (animated gauge + what-if) ·
-Loan check · Ready to sign? · Can I afford it? · What if… · Translate · Legit check · Next step
+**Grounded, no guessing.** Every number comes from `data.js`: 268 transactions (Apr–Sep 2026), balances,
+14 recurring bills and 3 savings goals for the fictional customer Jordan Morgan. Safe-to-spend uses the same
+`calculate_forecast()` as `safe_to_spend.py`, so it matches the Streamlit app ($2,101.18). If the data can't
+answer something (credit score, investing advice), Mercer says so instead of making it up. Ask "why?" after
+any answer to see where the number came from.
+
+**Listens.** It picks out the category, store, month, amount and item in a question, and follows the conversation:
+
+> How much did I spend on dining out in August? → What about groceries? → And July? → Why? → Show me
+
+It tolerates typos ("groceris") and asks a follow-up when something's missing ("Can I afford a jacket?" → "How much is it?").
+
+**Remembers.** Your name, goals, budgets, facts you ask it to remember, and the whole chat are saved on the device
+and survive reloads. It greets you with where you left off.
+
+- "Call me Adi" · "I'm saving for a car" · "Remember that rent goes up in January"
+- "Set my groceries budget to $450" · "Set my monthly budget to $3,600" (the Budget tab updates too)
+- "What do you remember about me?" · "Forget everything"
+
+**Try asking:** Where does my money go? · Am I on budget? · What bills are coming up? · When is Netflix due? ·
+What are my subscriptions? · How much can I safely spend? · Can I afford a $4,000 laptop? · How are my savings goals? ·
+When do I get paid? · Biggest purchase in July? · Compare August and September · How much have I spent at Taco Bell?
+
+## Optional: database + AI mode (backend)
+
+Run the backend and add `?api=` to the page URL:
+
+```bash
+cd backend && uvicorn app.main:app --reload
+open "frontend/phone.html?api=http://localhost:8000"     # or paste the URL in your browser
+```
+
+- Every message and the memory are stored in the backend's SQLite database (`GET /chat/{session_id}` shows them).
+- With `OPENAI_API_KEY` set, replies are rewritten more conversationally by the AI, which is only allowed to use
+  numbers from the data. Without a key, or if the backend is down, Mercer answers locally.
 
 ## Good to know
 
-- **All numbers are demo data.** Rent ($1,475.00) and PECO ($105.41) match `synthetic_bank_transactions.csv`;
-  the rest are samples. `[AMOUNT]` / `[BALANCE]` are placeholders.
-- **Chat replies are scripted** in `reply()` inside `mercer.js`. To make it real, replace that function with a
-  `fetch()` to the FastAPI service in `backend/` or to an LLM.
-- **Change the name:** `botName` in the `Mercer.mount(...)` call at the bottom of each HTML file.
-- **Not the real FNB site or logo.** It's labelled "Concept · HackPSU". Use FNB's official logo file only with permission.
-- Respects "reduce motion" settings and works with keyboard and screen readers (real buttons, labels, ARIA).
+- **All data is fictional demo data.** The credit score (710) and the SUV loan are labelled samples.
+- Not the real FNB site or logo; labelled "Concept · HackPSU".
+- Respects "reduce motion" settings and works with keyboard and screen readers.

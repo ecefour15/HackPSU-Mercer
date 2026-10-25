@@ -138,3 +138,47 @@ def test_abandon_is_final(client):
     did = make_decision(client, uid)
     assert client.post(f"/decisions/{did}/abandon").json()["status"] == "abandoned"
     assert client.post(f"/decisions/{did}/challenge").status_code == 409
+
+
+# ---------------- Mercer chat ----------------
+def test_chat_stores_history_memory_and_forgets(client):
+    sid = "test-session-1"
+    r = client.post("/chat", json={"session_id": sid, "message": "how much did I spend on dining out in august",
+                                   "local_reply": "You spent $107.91 on dining out in August.", "intent": "spend",
+                                   "memory": {"name": "Adi", "goals": ["car"]}})
+    assert r.status_code == 200, r.text
+    assert r.json() == {"reply": "You spent $107.91 on dining out in August.", "ai": False}  # no AI key: grounded reply as-is
+    client.post("/chat", json={"session_id": sid, "message": "thanks", "local_reply": "Happy to help.", "memory": {"name": "Adi", "goals": ["car"]}})
+    h = client.get(f"/chat/{sid}").json()
+    assert [m["role"] for m in h["messages"]] == ["user", "bot", "user", "bot"]
+    assert h["memory"]["name"] == "Adi"
+    assert client.delete(f"/chat/{sid}").status_code == 204
+    h = client.get(f"/chat/{sid}").json()
+    assert h["messages"] == [] and h["memory"] == {}
+
+
+def test_chat_uses_ai_with_grounded_facts(client, monkeypatch):
+    from app.services import chat, llm
+    seen = {}
+
+    def fake(system, messages, max_tokens=350):
+        seen["system"], seen["messages"] = system, messages
+        return "Adi, you spent $107.91 eating out in August, a bit under your usual."
+    monkeypatch.setattr(llm, "chat_complete", fake)
+    monkeypatch.setattr(chat, "load_data", lambda: {
+        "person": {"name": "Jordan Morgan", "employer": "BrightWave", "payDays": "15th and last day"}, "asOf": "2026-09-30",
+        "accounts": {"checking": 6953.10, "savings": 8241.65},
+        "safeToSpend": {"amount": 2101.18, "bills": 2512.40, "variable": 1189.52, "savings": 650, "buffer": 500,
+                        "upcoming": [{"date": "2026-10-01", "name": "Greenwood Apartments", "amount": 1475.0}]},
+        "goals": [{"name": "Emergency fund", "saved": 5950, "target": 10000, "monthly": 450, "deadline": "2027-12-31"}],
+        "transactions": [{"date": "2026-08-05", "merchant": "Taco Bell", "category": "Dining out", "type": "Expense", "amount": -21.39}]})
+    r = client.post("/chat", json={"session_id": "test-session-2", "message": "dining in august?",
+                                   "local_reply": "You spent $107.91 on dining out in August.", "memory": {"name": "Adi"}}).json()
+    assert r["ai"] is True and "$107.91" in r["reply"]
+    assert "Checking $6,953.10" in seen["system"] and "Use ONLY numbers" in seen["system"]
+    assert "DRAFT answer from the data" in seen["messages"][-1]["content"]
+
+
+def test_chat_rejects_bad_session_id(client):
+    r = client.post("/chat", json={"session_id": "../etc", "message": "hi", "local_reply": "Hey"})
+    assert r.status_code == 422

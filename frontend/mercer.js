@@ -49,11 +49,6 @@
     ['legit', 'Legit check', 'Spot hype and paid promos'],
     ['next', 'Next step', 'One small task at a time']
   ];
-  const BUDGET_CATS = [
-    ['Rent', 1475.00, 1475], ['Groceries', 412.30, 450], ['Dining out', 238.75, 200],
-    ['Getting around', 164.20, 180], ['Electric', 105.41, 120], ['Fun', 96.00, 150]
-  ];
-  const BUDGET_SPENT = BUDGET_CATS.reduce((a, c) => a + c[1], 0);
   const FEELINGS = [['excited', 'Excited'], ['calm', 'Calm'], ['pressured', 'Pressured'], ['anxious', 'Anxious'], ['confident', 'Confident'], ['fomo', 'Afraid to miss out']];
   const SCENARIOS = {
     car: { label: 'Buy the SUV', value: '[AMOUNT]', note: 'Slower growth: $629 a month goes to the car instead.' },
@@ -90,12 +85,19 @@
   class Mercer extends Component {
     constructor(props) {
       super(props);
+      let storage = null;
+      try { storage = window.localStorage; storage.getItem('mercer.test'); } catch (e) { storage = null; }
+      this.storage = storage;
+      this.brain = window.MercerBrain.create({ data: window.MERCER_DATA, storage });
+      this.api = props.apiUrl || (new URLSearchParams(location.search)).get('api') || null;
+      this.session = this.sessionId();
       this.state = {
         open: props.startOpen !== false,
         dark: document.documentElement.dataset.theme === 'dark',
-        view: 'home', draft: '', typing: false, msgs: [],
+        view: 'home', draft: '', typing: false,
+        msgs: this.brain.history(), greeting: this.brain.greeting(), suggestions: this.brain.suggestions(),
         picked: { excited: true, pressured: true }, scen: 'car', done: { 1: true },
-        budget: 2600, credit: {}
+        credit: {}, aiMode: false, tick: 0
       };
       this.timer = null;
     }
@@ -114,100 +116,146 @@
     componentWillUnmount() { clearTimeout(this.timer); }
     applyTheme() { document.documentElement.dataset.theme = this.state.dark ? 'dark' : 'light'; }
 
-    // Scripted replies. Replace with a fetch() to your backend or an LLM.
-    reply(text) {
-      const t = text.toLowerCase();
-      if (/budget|limit|over|under/.test(t)) return this.state.budget >= BUDGET_SPENT
-        ? `You're under budget this month: ${fmt(BUDGET_SPENT)} spent of your ${fmt(this.state.budget)} limit.\nDining out is the one category over its limit.`
-        : `Heads up: you're over your ${fmt(this.state.budget)} monthly limit. Open Budget to see where.`;
-      if (/credit|score|fico/.test(t)) return 'Your score is 710, in the Good range (670 to 739).\nThe fastest boost: get card balances under 10% of your limits. Open Credit score to try it.';
-      if (/spend|afford|left/.test(t)) return 'You can safely spend $681.77 over the next 30 days.\nThat already covers rent, your PECO bill, your $650 savings goal and a $500 cushion.';
-      if (/loan|car|suv|contract|sign/.test(t)) return 'That SUV loan costs $629 a month and $9,320 in interest over 6 years.\nIt also has an early payoff fee. Want me to open the full check?';
-      if (/bill|rent|due/.test(t)) return 'Next up: rent ($1,475.00) on Nov 1, then PECO ($105.41) around Nov 2.';
-      if (/save|emergency|goal/.test(t)) return "You're 1 of 3 steps into your emergency fund. Next: open a high-yield savings account. It takes about 5 minutes.";
-      return 'I can help with that. Try a tool below, or ask me about a bill, a loan, or something you want to buy.';
+    sessionId() {
+      try {
+        let id = this.storage && this.storage.getItem('mercer.session');
+        if (!id) { id = 's-' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36); this.storage && this.storage.setItem('mercer.session', id); }
+        return id;
+      } catch (e) { return 's-anon'; }
+    }
+
+    // Local brain always answers from the data. If a backend is configured (?api=http://localhost:8000),
+    // it also saves the chat in its database and, when it has an AI key, rewrites the answer more naturally
+    // using only the same grounded facts. Any backend problem falls back to the local answer.
+    async think(q) {
+      const local = this.brain.respond(q);
+      if (local.cleared) {
+        if (this.api) fetch(this.api.replace(/\/$/, '') + '/chat/' + encodeURIComponent(this.session), { method: 'DELETE' }).catch(() => {});
+        return local;
+      }
+      if (!this.api) return local;
+      try {
+        const ctrl = new AbortController();
+        const to = setTimeout(() => ctrl.abort(), 9000);
+        const res = await fetch(this.api.replace(/\/$/, '') + '/chat', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: ctrl.signal,
+          body: JSON.stringify({ session_id: this.session, message: q, local_reply: local.text, intent: local.intent, memory: this.brain.memory() })
+        });
+        clearTimeout(to);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const out = await res.json();
+        this.setState({ aiMode: !!out.ai });
+        return Object.assign({}, local, { text: out.reply || local.text });
+      } catch (e) {
+        return local;
+      }
     }
     ask(text) {
       const q = (text || '').trim();
-      if (!q) return;
+      if (!q || this.state.typing) return;
       this.setState({ msgs: this.state.msgs.concat([{ from: 'me', text: q }]), draft: '', typing: true, view: 'home' });
-      clearTimeout(this.timer);
-      this.timer = setTimeout(() => {
-        this.setState((s) => ({ typing: false, msgs: s.msgs.concat([{ from: 'bot', text: this.reply(q) }]) }));
-      }, 900);
+      const started = Date.now();
+      this.think(q).then((r) => {
+        const wait = Math.max(0, Math.min(900, 350 + r.text.length * 2) - (Date.now() - started));
+        clearTimeout(this.timer);
+        this.timer = setTimeout(() => {
+          if (r.cleared) {
+            this.setState({ typing: false, msgs: [{ from: 'bot', text: r.text }], greeting: this.brain.greeting(), suggestions: this.brain.suggestions() });
+            return;
+          }
+          this.setState((s) => ({ typing: false, msgs: s.msgs.concat([{ from: 'bot', text: r.text, actions: r.actions }]), suggestions: this.brain.suggestions() }));
+        }, wait);
+      });
     }
+    act(a) { if (a.view) this.go(a.view); else if (a.ask) this.ask(a.ask); }
+    forget() { const r = this.brain.forget(); this.setState({ msgs: [], greeting: this.brain.greeting(), suggestions: this.brain.suggestions(), tick: this.state.tick + 1 }); return r; }
     go(view) { this.setState({ view }); }
 
     // ---------- views ----------
     viewHome(botName) {
       const s = this.state;
-      const msgs = [{ from: 'bot', text: `Hi, I'm ${botName}. I can check a loan, tell you what's safe to spend, or help you think through a big decision.` }].concat(s.msgs);
+      const msgs = [{ from: 'bot', text: s.greeting }].concat(s.msgs);
+      const remembers = s.msgs.length > 0;
       return html`<div class="stack">
-        ${msgs.map((m, i) => html`<div key=${i} class=${'msg ' + m.from}><div class="bubble">${m.text}</div></div>`)}
+        ${msgs.map((m, i) => html`<div key=${i} class=${'msg ' + m.from} style="flex-direction:column;align-items:${m.from === 'me' ? 'flex-end' : 'flex-start'}">
+          <div class="bubble">${m.text}</div>
+          ${m.actions && m.actions.length > 0 && html`<div class="m-acts">${m.actions.map((a) => html`<button type="button" class="pill" onClick=${() => this.act(a)}>${a.label} →</button>`)}</div>`}
+        </div>`)}
         ${s.typing && html`<div class="msg bot" aria-label=${botName + ' is typing'}><div class="bubble muted"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div></div>`}
-        ${s.msgs.length === 0 && !s.typing && html`
+        ${!remembers && !s.typing && html`
           <p class="kicker">Tools</p>
           <div class="grid2">
             ${TOOLS.slice(1).map(([id, label, desc]) => html`<button key=${id} type="button" class="tile" onClick=${() => this.go(id)}><b>${label}</b><span>${desc}</span></button>`)}
           </div>`}
+        <p class="m-memory muted">
+          ${remembers ? 'Remembers your chats on this device' : 'Answers from your account data · remembers what you tell it'}${s.aiMode ? ' · AI on' : ''}
+          ${remembers && html` · <button type="button" class="linkbtn" onClick=${() => this.ask('forget everything')}>Forget</button>`}
+        </p>
       </div>`;
     }
 
     viewSafe() {
-      const rows = [['Checking', '$3,412.18'], ['Bills due', '−$1,580.41'], ['Savings goal', '−$650.00'], ['Cushion', '−$500.00']];
+      const D = window.MERCER_DATA, st = D.safeToSpend;
+      const rows = [['Checking', fmt(D.accounts.checking)], ['Bills, next 30 days', '−' + fmt(st.bills)], ['Everyday spending reserve', '−' + fmt(st.variable)], ['Savings', '−' + fmt(st.savings)], ['Cushion', '−' + fmt(st.buffer)]];
       return html`<div class="stack">
         <div class="box" style="padding:20px;border-radius:20px">
           <p class="muted" style="margin:0;font-size:13px">You can spend, next 30 days</p>
-          <p class="mono" style="margin:4px 0 0;font-size:42px;letter-spacing:-.03em;line-height:1.1">$681.77</p>
+          <p class="mono" style="margin:4px 0 0;font-size:42px;letter-spacing:-.03em;line-height:1.1">${fmt(st.amount)}</p>
           <p class="muted" style="margin:6px 0 0;font-size:13px">No paychecks assumed. That's the safe way to count.</p>
         </div>
         <div class="box" style="padding:0 16px">
           ${rows.map(([k, v], i) => html`<div key=${k} class="row" style=${i ? '' : 'border-top:0'}><span>${k}</span><span class="mono">${v}</span></div>`)}
         </div>
+        <div class="box" style="padding:4px 16px">
+          <p style="margin:12px 0 2px;font-weight:600">Next bills</p>
+          ${st.upcoming.slice(0, 6).map((b) => html`<div key=${b.name} class="row" style="font-size:14px"><span>${b.date.slice(5).replace('-', '/')} · ${b.name}</span><span class="mono">${fmt(b.amount)}</span></div>`)}
+        </div>
       </div>`;
     }
 
     viewBudget() {
-      const s = this.state;
-      const left = s.budget - BUDGET_SPENT;
-      const over = left < 0;
-      const overCats = BUDGET_CATS.filter((c) => c[1] > c[2]).map((c) => c[0]);
-      const pct = Math.min(100, (BUDGET_SPENT / s.budget) * 100);
+      const b = this.brain.budgetStatus();
+      const over = b.over;
+      const overCats = b.cats.filter((c) => c.over).map((c) => c.name);
+      const pct = Math.min(100, (b.spent / b.limit) * 100);
+      const setLimit = (v) => { this.brain.setMonthlyLimit(Math.max(500, v)); this.setState({ tick: this.state.tick + 1, suggestions: this.brain.suggestions() }); };
       return html`<div class="stack">
         <div class=${'note ' + (over ? 'bad' : 'good')} style="display:flex;align-items:center;gap:16px;border-radius:20px;padding:16px 18px">
           ${over ? html`<${PixelFace} key="sad" happy=${false} />` : html`<${PixelFace} key="happy" happy=${true} />`}
           <div style="min-width:0">
-            <p style="font-weight:700;font-size:17px;line-height:1.3">You're ${fmt(left)} ${over ? 'over' : 'under'} budget</p>
-            <p style="margin-top:2px;font-size:13px;opacity:.85">${over
+            <p style="font-weight:700;font-size:17px;line-height:1.3">You're ${fmt(Math.abs(b.left))} ${over ? 'over' : 'under'} budget</p>
+            <p style="margin-top:2px;font-size:13px;opacity:.85">${b.monthLabel} · ${over
               ? `Time to slow down. Biggest jump: ${overCats[0] || 'spending'}.`
-              : overCats.length ? `Nice. Just keep an eye on ${overCats.join(', ')}.` : 'Nice. Every category is on track.'}</p>
+              : overCats.length ? `Nice. Just keep an eye on ${overCats.slice(0, 2).join(' and ')}.` : 'Nice. Every category is on track.'}</p>
           </div>
         </div>
         <div class="box stack" style="gap:10px">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
-            <div><p class="muted" style="margin:0;font-size:12px">This month's limit</p><p class="mono" style="margin:0;font-size:22px">${fmt(s.budget)}</p></div>
+            <div><p class="muted" style="margin:0;font-size:12px">Monthly limit</p><p class="mono" style="margin:0;font-size:22px">${fmt(b.limit)}</p></div>
             <div style="display:flex;gap:6px">
-              <button type="button" class="m-icon" style="width:44px;height:44px;font-size:22px" aria-label="Lower monthly limit by $100" onClick=${() => this.setState({ budget: Math.max(500, s.budget - 100) })}>−</button>
-              <button type="button" class="m-icon" style="width:44px;height:44px;font-size:22px" aria-label="Raise monthly limit by $100" onClick=${() => this.setState({ budget: s.budget + 100 })}>+</button>
+              <button type="button" class="m-icon" style="width:44px;height:44px;font-size:22px" aria-label="Lower monthly limit by $100" onClick=${() => setLimit(b.limit - 100)}>−</button>
+              <button type="button" class="m-icon" style="width:44px;height:44px;font-size:22px" aria-label="Raise monthly limit by $100" onClick=${() => setLimit(b.limit + 100)}>+</button>
             </div>
           </div>
-          <div class="track" style="height:10px" role="img" aria-label=${`Spent ${Math.round((BUDGET_SPENT / s.budget) * 100)} percent of the monthly limit`}>
+          <div class="track" style="height:10px" role="img" aria-label=${`Spent ${Math.round((b.spent / b.limit) * 100)} percent of the monthly limit`}>
             <div class="bar" style=${{ width: pct.toFixed(1) + '%', background: over ? 'var(--badBar)' : 'var(--goodBar)' }}></div>
           </div>
-          <p class="muted" style="margin:0;font-size:13px">Spent so far: <strong style="color:var(--ink)">${fmt(BUDGET_SPENT)}</strong></p>
+          <p class="muted" style="margin:0;font-size:13px">Spent in ${b.monthLabel}: <strong style="color:var(--ink)">${fmt(b.spent)}</strong> · includes rent and bills</p>
         </div>
         <div class="box" style="padding:4px 16px">
-          ${BUDGET_CATS.map(([name, sp, lim], i) => {
-            const o = sp > lim + 0.001, d = lim - sp;
-            return html`<div key=${name} style=${'padding:12px 0;display:flex;flex-direction:column;gap:6px;' + (i ? 'border-top:1px solid var(--line)' : '')}>
+          <p style="margin:12px 0 0;font-weight:600">Everyday categories</p>
+          ${b.cats.map((c, i) => {
+            const d = c.limit - c.spent;
+            return html`<div key=${c.name} style=${'padding:12px 0;display:flex;flex-direction:column;gap:6px;' + (i ? 'border-top:1px solid var(--line)' : '')}>
               <div style="display:flex;justify-content:space-between;gap:10px;font-size:14px">
-                <span style="font-weight:500">${name}</span>
-                <span class=${'tag ' + (o ? 'bad' : 'good')}>${o ? 'Over ' + fmt(d) : Math.abs(d) < 0.01 ? 'On budget' : fmt(d) + ' left'}</span>
+                <span style="font-weight:500">${c.name}</span>
+                <span class=${'tag ' + (c.over ? 'bad' : 'good')}>${c.over ? 'Over ' + fmt(-d) : fmt(d) + ' left'}</span>
               </div>
-              <div class="track" style="height:6px"><div class="bar" style=${{ width: Math.min(100, (sp / lim) * 100).toFixed(1) + '%', background: o ? 'var(--badBar)' : 'var(--goodBar)' }}></div></div>
-              <span class="muted" style="font-size:12px">${fmt(sp)} of ${fmt(lim)}</span>
+              <div class="track" style="height:6px"><div class="bar" style=${{ width: Math.min(100, (c.spent / c.limit) * 100).toFixed(1) + '%', background: c.over ? 'var(--badBar)' : 'var(--goodBar)' }}></div></div>
+              <span class="muted" style="font-size:12px">${fmt(c.spent)} of ${fmt(c.limit)}${c.custom ? ' · your limit' : ' · 6-month average'}</span>
             </div>`;
           })}
+          <p class="muted" style="margin:0 0 12px;font-size:12px">Tip: tell ${'Mercer'} "set my groceries budget to $450" to change a limit.</p>
         </div>
       </div>`;
     }
@@ -424,7 +472,7 @@
           <div class="m-body" ref=${(el) => { this.body = el; }}><div key=${s.view} class="m-view">${views[s.view]()}</div></div>
           <div class="m-compose">
             ${atHome && html`<div class="m-chips">
-              ${["Am I on budget?", "What's my credit score?", 'Is my car loan OK?'].map((c) => html`<button key=${c} type="button" class="pill" onClick=${() => this.ask(c)}>${c}</button>`)}
+              ${s.suggestions.map((c) => html`<button key=${c} type="button" class="pill" onClick=${() => this.ask(c)}>${c}</button>`)}
             </div>`}
             <div class="m-input">
               <label for="mercer-ask" class="sr-only">Message ${botName}</label>
@@ -441,7 +489,31 @@
     }
   }
 
+  // Fills any element with data-m="..." on the bank page from the same data Mercer uses.
+  function fillBank(rootEl) {
+    const D = window.MERCER_DATA; if (!D) return;
+    const r = rootEl || document;
+    const set = (k, v) => r.querySelectorAll('[data-m="' + k + '"]').forEach((el) => { el.textContent = v; });
+    set('name', D.person.name.split(' ')[0]);
+    set('checking', fmt(D.accounts.checking)); set('savings', fmt(D.accounts.savings));
+    set('total', fmt(D.accounts.checking + D.accounts.savings));
+    set('checkingMask', '••' + D.accounts.checkingMask.slice(-4)); set('savingsMask', '••' + D.accounts.savingsMask.slice(-4));
+    set('safe', fmt(D.safeToSpend.amount));
+    const box = r.querySelector('[data-m="activity"]');
+    if (box) {
+      const rows = D.transactions.slice(-4).reverse();
+      box.innerHTML = '';
+      rows.forEach((t) => {
+        const row = document.createElement('div'); row.className = 'row';
+        const a = document.createElement('span'); a.textContent = t.merchant.replace('Internal savings transfer', 'Transfer to savings');
+        const b = document.createElement('span'); b.className = 'mono'; b.textContent = (t.amount > 0 ? '+' : '−') + fmt(t.amount);
+        row.append(a, b); box.append(row);
+      });
+    }
+  }
+
   window.Mercer = {
-    mount(el, props) { render(html`<${Mercer} ...${props || {}} />`, el); }
+    mount(el, props) { fillBank(document); render(html`<${Mercer} ...${props || {}} />`, el); },
+    fillBank
   };
 })();

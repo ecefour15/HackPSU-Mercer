@@ -35,25 +35,28 @@
 
   <main>
     <div>
-      <p class="muted" style="margin:0;font-size:14px">Good evening</p>
+      <p class="muted" style="margin:0;font-size:14px">Hi, <span data-m="name">there</span></p>
       <h1 style="margin:2px 0 0;font-size:30px;letter-spacing:-.02em">Your accounts</h1>
     </div>
     <div class="accounts">
-      <div class="card"><p class="muted" style="font-size:13px">Checking ••4417</p><p class="mono" style="margin-top:6px;font-size:28px">$3,412.18</p></div>
-      <div class="card"><p class="muted" style="font-size:13px">Savings ••0921</p><p class="mono" style="margin-top:6px;font-size:28px">[BALANCE]</p></div>
-      <div class="card"><p class="muted" style="font-size:13px">Credit card ••8830</p><p class="mono" style="margin-top:6px;font-size:28px">[BALANCE]</p></div>
+      <div class="card"><p class="muted" style="font-size:13px">Checking <span data-m="checkingMask"></span></p><p class="mono" style="margin-top:6px;font-size:28px" data-m="checking">–</p></div>
+      <div class="card"><p class="muted" style="font-size:13px">Savings <span data-m="savingsMask"></span></p><p class="mono" style="margin-top:6px;font-size:28px" data-m="savings">–</p></div>
+      <div class="card"><p class="muted" style="font-size:13px">Safe to spend · next 30 days</p><p class="mono" style="margin-top:6px;font-size:28px" data-m="safe">–</p></div>
     </div>
     <section class="card" style="padding:8px 22px;max-width:720px">
       <h2 style="margin:14px 0 6px;font-size:16px">Recent activity</h2>
-      <div class="row"><span>Greenwood Apartments · Rent</span><span class="mono">−$1,475.00</span></div>
-      <div class="row"><span>PECO Energy · Autopay</span><span class="mono">−$105.41</span></div>
+      <div data-m="activity"></div>
+      <p class="muted" style="font-size:12px;margin:10px 0 14px">Demo data: fictional customer, activity through Sep 30, 2026.</p>
     </section>
   </main>
 
   <div id="mercer"></div>
 
-  <script src="https://unpkg.com/preact@10.24.3/dist/preact.umd.js"></script>
-  <script src="https://unpkg.com/htm@3.1.1/dist/htm.umd.js"></script>
+  <!-- All local: works offline. vendor/ = Preact 10.24.3 + htm 3.1.1 -->
+  <script src="vendor/preact.umd.js"></script>
+  <script src="vendor/htm.umd.js"></script>
+  <script src="data.js"></script>
+  <script src="brain.js"></script>
   <script src="mercer.js"></script>
   <script>Mercer.mount(document.getElementById('mercer'), { mode: 'web', botName: 'Mercer' });</script>
 </body>

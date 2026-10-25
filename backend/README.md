@@ -36,6 +36,20 @@ Optional settings (environment variables):
 | `MIN_COHORT_SIZE` | `10` | k-anonymity threshold for benchmarks |
 | `COOLING_OFF_HOURS` | `24` | Length of a recommended cooling-off period |
 
+## Mercer chat (database + memory)
+
+```
+POST   /chat                 save a message + memory; returns a grounded reply (AI-polished if a key is set)
+GET    /chat/{session_id}    full chat history and memory for a session
+DELETE /chat/{session_id}    "forget everything"
+```
+
+The browser (`frontend/brain.js`) computes each answer from the account data and sends it as `local_reply`.
+The backend stores the conversation in the `chat_messages` and `chat_memory` tables. With `OPENAI_API_KEY`
+(or `ANTHROPIC_API_KEY`) set, it rewrites the reply conversationally using the same data facts
+(`app/services/chat.py`); the prompt only allows numbers that appear in the data. Reads `../frontend/data.js`
+(override with `MERCER_DATA_PATH`).
+
 ## The flow
 
 ```
@@ -120,5 +134,6 @@ app/
     llm.py             optional narrative
     benchmarks.py      cohorts + k-anonymity
     journal.py         emotional check-in analysis + insights
-tests/test_api.py    end-to-end tests (7)
+    chat.py            Mercer chat: data facts + AI rewrite
+tests/test_api.py    end-to-end tests (10)
 ```

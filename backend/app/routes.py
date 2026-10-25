@@ -7,8 +7,8 @@ from sqlalchemy.orm import Session
 
 from app import schemas
 from app.database import get_db
-from app.models import ChallengeReport, Decision, DecisionStatus, JournalEntry, User
-from app.services import benchmarks, devils_advocate, journal, llm
+from app.models import ChallengeReport, ChatMemory, ChatMessage, Decision, DecisionStatus, JournalEntry, User
+from app.services import benchmarks, chat, devils_advocate, journal, llm
 
 router = APIRouter()
 
@@ -194,3 +194,49 @@ def journal_insights(user_id: int, db: Session = Depends(get_db)):
         select(JournalEntry).join(Decision).where(Decision.user_id == user_id)
     ))
     return journal.insights(entries)
+
+
+# ---------------- Mercer chat ----------------
+@router.post("/chat", response_model=schemas.ChatOut, tags=["mercer-chat"])
+def mercer_chat(body: schemas.ChatIn, db: Session = Depends(get_db)):
+    """Save the message, remember what the user told Mercer, and return a grounded reply.
+
+    `local_reply` is the answer the browser computed from the account data. With an AI key set,
+    it's rewritten conversationally using only those facts; otherwise it's returned as-is.
+    """
+    history = list(db.scalars(select(ChatMessage).where(ChatMessage.session_id == body.session_id)
+                              .order_by(ChatMessage.id.desc()).limit(10)))[::-1]
+    mem = db.get(ChatMemory, body.session_id)
+    if body.memory is not None:
+        if mem:
+            mem.data = body.memory
+        else:
+            mem = ChatMemory(session_id=body.session_id, data=body.memory)
+            db.add(mem)
+    rewritten = chat.ai_reply(body.message, body.local_reply, body.memory or (mem.data if mem else {}),
+                              [{"role": h.role, "content": h.content} for h in history])
+    reply = rewritten or body.local_reply
+    db.add(ChatMessage(session_id=body.session_id, role="user", content=body.message, intent=body.intent))
+    db.add(ChatMessage(session_id=body.session_id, role="bot", content=reply, intent=body.intent, ai=bool(rewritten)))
+    db.commit()
+    return {"reply": reply, "ai": bool(rewritten)}
+
+
+@router.get("/chat/{session_id}", response_model=schemas.ChatHistoryOut, tags=["mercer-chat"])
+def mercer_history(session_id: str, db: Session = Depends(get_db)):
+    """Everything Mercer has stored for a session: messages and memory."""
+    rows = list(db.scalars(select(ChatMessage).where(ChatMessage.session_id == session_id).order_by(ChatMessage.id)))
+    mem = db.get(ChatMemory, session_id)
+    return {"session_id": session_id, "memory": mem.data if mem else {},
+            "messages": [{"role": m.role, "content": m.content, "intent": m.intent, "ai": m.ai, "at": m.created_at} for m in rows]}
+
+
+@router.delete("/chat/{session_id}", status_code=204, tags=["mercer-chat"])
+def mercer_forget(session_id: str, db: Session = Depends(get_db)):
+    """'Forget everything': delete the session's messages and memory."""
+    for m in db.scalars(select(ChatMessage).where(ChatMessage.session_id == session_id)):
+        db.delete(m)
+    mem = db.get(ChatMemory, session_id)
+    if mem:
+        db.delete(mem)
+    db.commit()

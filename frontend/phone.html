@@ -37,8 +37,8 @@
         <strong style="font-size:17px;letter-spacing:-.01em">First National Bank</strong>
         <span style="font-size:11px;background:rgba(255,255,255,.14);padding:4px 8px;border-radius:999px">Concept</span>
       </div>
-      <p style="margin-top:18px;font-size:13px;color:#D6E0EE">Total available</p>
-      <p class="mono" style="margin-top:2px;font-size:34px;letter-spacing:-.02em">$3,412.18</p>
+      <p style="margin-top:18px;font-size:13px;color:#D6E0EE">Checking available</p>
+      <p class="mono" style="margin-top:2px;font-size:34px;letter-spacing:-.02em" data-m="checking">–</p>
     </header>
     <div class="stripe"></div>
 
@@ -47,13 +47,12 @@
         <button type="button">Transfer</button><button type="button">Pay bills</button><button type="button">Deposit</button><button type="button">Cards</button>
       </div>
       <div class="card" style="padding:4px 16px">
-        <div class="row" style="border-top:0;padding:14px 0"><span>Checking ••4417</span><span class="mono">$3,412.18</span></div>
-        <div class="row" style="padding:14px 0"><span>Savings ••0921</span><span class="mono">[BALANCE]</span></div>
+        <div class="row" style="border-top:0;padding:14px 0"><span>Checking <span data-m="checkingMask"></span></span><span class="mono" data-m="checking">–</span></div>
+        <div class="row" style="padding:14px 0"><span>Savings <span data-m="savingsMask"></span></span><span class="mono" data-m="savings">–</span></div>
       </div>
       <div class="card" style="padding:4px 16px">
         <p style="margin:12px 0 2px;font-weight:600">Recent activity</p>
-        <div class="row" style="font-size:14px"><span>Greenwood Apartments</span><span class="mono">−$1,475.00</span></div>
-        <div class="row" style="font-size:14px"><span>PECO Energy</span><span class="mono">−$105.41</span></div>
+        <div data-m="activity" style="font-size:14px"></div>
       </div>
     </main>
 
@@ -68,8 +67,11 @@
     <div id="mercer"></div>
   </div>
 
-  <script src="https://unpkg.com/preact@10.24.3/dist/preact.umd.js"></script>
-  <script src="https://unpkg.com/htm@3.1.1/dist/htm.umd.js"></script>
+  <!-- All local: works offline. vendor/ = Preact 10.24.3 + htm 3.1.1 -->
+  <script src="vendor/preact.umd.js"></script>
+  <script src="vendor/htm.umd.js"></script>
+  <script src="data.js"></script>
+  <script src="brain.js"></script>
   <script src="mercer.js"></script>
   <script>Mercer.mount(document.getElementById('mercer'), { mode: 'phone', botName: 'Mercer', startOpen: false });</script>
 </body>
