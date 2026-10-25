@@ -1,4 +1,4 @@
-# LoanGuard AI — FNB HackPSU
+# Mercer — FNB HackPSU
 
 ## Run
 
