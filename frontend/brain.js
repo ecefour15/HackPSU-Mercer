@@ -78,7 +78,7 @@
       .filter((m) => !/internal savings/i.test(m));
 
     // ---------- memory (persisted)
-    const blank = () => ({ name: null, facts: [], goals: [], budgets: {}, monthlyLimit: null, history: [], topic: null, visits: 0, lastVisit: null });
+    const blank = () => ({ name: null, facts: [], goals: [], budgets: {}, monthlyLimit: null, settings: {}, history: [], topic: null, visits: 0, lastVisit: null });
     let mem = blank();
     try { const raw = store && store.getItem(KEY); if (raw) mem = Object.assign(blank(), JSON.parse(raw)); } catch (e) { /* fresh */ }
     const save = () => { try { store && store.setItem(KEY, JSON.stringify(mem)); } catch (e) { /* private mode */ } };
@@ -112,6 +112,146 @@
       const rows = txns.filter((t) => t.type === 'Income').filter(inMonth(month));
       return { total: sum(rows.map((t) => t.amount)), rows };
     }
+    // ---------- editable numbers (saved in memory) + calculators
+    const avgIncome = sum(months.map((m) => incomeOf(m).total)) / months.length;
+    const avgSpend = sum(months.map((m) => spendOf({ month: m }).total)) / months.length;
+    const debtBills = D.bills.filter((b) => /loan/i.test(b.category));
+    const debtMonthly = sum(debtBills.map((b) => b.amount));
+    const setting = (k, dflt) => (mem.settings && mem.settings[k] != null ? mem.settings[k] : dflt);
+    function sts() {
+      const s0 = D.safeToSpend;
+      const checking = setting('checking', D.accounts.checking);
+      const savings = setting('monthlySavings', D.rules.monthlySavings);
+      const buffer = setting('buffer', D.rules.buffer);
+      const amount = Math.max(0, checking - s0.bills - s0.variable - savings - buffer);
+      return { amount, checking, bills: s0.bills, variable: s0.variable, savings, buffer, edited: ['checking', 'monthlySavings', 'buffer'].some((k) => mem.settings[k] != null) };
+    }
+    // Port of Calculators.loan_summary / effective_apr (team's Python), so numbers match its tests.
+    function loanPayment(p, apr, n) { if (apr === 0) return p / n; const r = apr / 1200; return p * r / (1 - Math.pow(1 + r, -n)); }
+    function effectiveApr(proceeds, pay, n) {
+      if (pay * n <= proceeds) return 0;
+      const pv = (r) => r === 0 ? pay * n : pay * (1 - Math.pow(1 + r, -n)) / r;
+      let lo = 0, hi = 1; for (let i = 0; i < 200; i++) { const mid = (lo + hi) / 2; if (pv(mid) > proceeds) lo = mid; else hi = mid; }
+      return (lo + hi) / 2 * 1200;
+    }
+    function loanSummary(L) {
+      const price = +L.price, down = +L.down || 0, apr = +L.apr, n = Math.round(+L.term), fees = +L.fees || 0, financed = !!L.financed;
+      if (!(price > 0)) return { error: 'Enter a price above $0.' };
+      if (!(n >= 1 && n <= 480)) return { error: 'Term must be 1 to 480 months.' };
+      if (!(apr >= 0 && apr <= 100)) return { error: 'APR must be between 0% and 100%.' };
+      if (down < 0 || fees < 0) return { error: "Down payment and fees can't be negative." };
+      if (down >= price) return { error: 'Down payment must be less than the price.' };
+      const base = price - down, principal = financed ? base + fees : base;
+      const payment = loanPayment(principal, apr, n), totalPaid = payment * n, interest = totalPaid - principal;
+      const proceeds = financed ? base : base - fees, cash = down + (financed ? 0 : fees);
+      const trueApr = effectiveApr(proceeds, payment, n);
+      const warnings = [];
+      if (trueApr - apr >= 0.5) warnings.push(`Fees raise the real borrowing rate from ${apr}% to about ${trueApr.toFixed(2)}%.`);
+      if (n > 60) warnings.push(`A ${n}-month loan keeps payments low but costs more interest, and you can owe more than the car is worth for years.`);
+      return { principal, payment, interest, totalPaid, cash, totalCost: cash + totalPaid, trueApr, warnings, n, apr };
+    }
+    // Go / Wait / Rethink for a loan, from the customer's own numbers.
+    function decision(L, noFixes) {
+      const ls = loanSummary(L); if (ls.error) return ls;
+      const dtiBefore = debtMonthly / avgIncome, dtiAfter = (debtMonthly + ls.payment) / avgIncome;
+      const savingsAfter = D.accounts.savings - (+L.down || 0) - (L.financed ? 0 : (+L.fees || 0));
+      const runway = Math.max(0, savingsAfter) / avgSpend;
+      const slack = avgIncome - avgSpend - setting('monthlySavings', D.rules.monthlySavings);
+      const reasons = [];
+      reasons.push({ ok: dtiAfter <= 0.36, warn: dtiAfter > 0.43, tag: 'From your data', text: `Debt payments would go from ${Math.round(dtiBefore * 100)}% to ${Math.round(dtiAfter * 100)}% of your take-home pay (${money(debtMonthly + ls.payment)}/mo of ${money(avgIncome)}). Lenders get cautious above 36%.` });
+      reasons.push({ ok: ls.payment <= slack, warn: ls.payment > slack + setting('monthlySavings', D.rules.monthlySavings), tag: 'From your data', text: ls.payment <= slack ? `The ${money(ls.payment)} payment fits in the ${money(slack)} you usually have left each month after spending and savings.` : `The ${money(ls.payment)} payment is ${money(ls.payment - slack)} more than you usually have left each month, so you'd have to cut savings or spending.` });
+      const fromSavings = D.accounts.savings - savingsAfter;
+      reasons.push(fromSavings <= 0
+        ? { ok: true, warn: false, tag: 'From your data', text: `It doesn't touch your ${money(D.accounts.savings, false)} savings (about ${runway.toFixed(1)} months of spending${runway < 3 ? '; building toward 3 months would make you safer' : ''}).` }
+        : { ok: runway >= 3, warn: runway < 1, tag: 'Estimate', text: `Paying ${money(fromSavings, false)} upfront leaves ${money(Math.max(0, savingsAfter), false)} in savings, about ${runway.toFixed(1)} months of your usual spending. The usual target is 3 to 6.` });
+      reasons.push({ ok: ls.trueApr - ls.apr < 0.5 && ls.n <= 60, warn: false, tag: 'From the loan terms', text: `You'd pay ${money(ls.interest)} in interest${ls.trueApr - ls.apr >= 0.5 ? `, and fees push the real rate to ${ls.trueApr.toFixed(2)}%` : ''}${ls.n > 60 ? ` over a long ${ls.n}-month term` : ''}.` });
+      const warns = reasons.filter((r) => r.warn).length, oks = reasons.filter((r) => r.ok).length;
+      const verdict = warns ? 'rethink' : oks === reasons.length ? 'go' : 'wait';
+      const head = { go: 'Go: this fits your finances.', wait: 'Wait: doable, with real trade-offs.', rethink: 'Rethink: this would strain your budget.' }[verdict];
+      // Suggest only changes that actually improve the verdict (each one is checked first).
+      const fixes = [];
+      if (!noFixes && verdict !== 'go') {
+        const score = (dd) => dd.reasons.filter((r) => r.ok).length - 2 * dd.reasons.filter((r) => r.warn).length;
+        const cur = oks - 2 * warns, price = +L.price, step = Math.max(500, Math.round(price * 0.1 / 500) * 500);
+        const cands = [];
+        [36, 48, 60].filter((m) => m < ls.n).forEach((m) => cands.push({ label: `${m} months`, patch: { term: m } }));
+        if (ls.n < 72) cands.push({ label: `${ls.n + 12} months`, patch: { term: ls.n + 12 } });
+        cands.push({ label: `${money(step, false)} more down`, patch: { down: (+L.down || 0) + step } });
+        if ((+L.down || 0) >= step) cands.push({ label: `${money(step, false)} less down`, patch: { down: (+L.down || 0) - step } });
+        if (+L.fees > 0) cands.push({ label: `Ask them to waive the ${money(+L.fees, false)} fee`, patch: { fees: 0 } });
+        if (+L.down > 0) cands.push({ label: 'Keep your savings: $0 down', patch: { down: 0 } });
+        [0.85, 0.7].forEach((f) => cands.push({ label: `A ${money(Math.round(price * f / 500) * 500, false)} price`, patch: { price: Math.round(price * f / 500) * 500 } }));
+        cands.forEach((c) => { const dd = decision(Object.assign({}, L, c.patch), true); if (!dd.error) { const sc = score(dd); if (sc > cur) fixes.push(Object.assign(c, { sc, verdict: dd.verdict, label: `${c.label} → ${money(dd.loan.payment, false)}/mo` })); } });
+        fixes.sort((a, b) => b.sc - a.sc || (a.verdict === 'go' ? -1 : 1));
+        fixes.splice(3);
+      }
+      return { verdict, head, reasons, loan: ls, fixes };
+    }
+    function whatIf({ extra = 0, oneTime = 0 }) {
+      const base = setting('monthlySavings', D.rules.monthlySavings), start = D.accounts.savings;
+      const series = (m, o) => Array.from({ length: 61 }, (_, i) => Math.max(0, start - o + m * i));
+      const ef = D.goals.find((g) => /emergency/i.test(g.name)) || D.goals[0];
+      const share = ef.monthly / D.rules.monthlySavings;
+      const efMonths = (m, o) => { const per = Math.max(0, m) * share; const need = ef.target - ef.saved + o * share; return per > 0 ? Math.max(0, Math.ceil(need / per)) : Infinity; };
+      const monthly = Math.max(0, base + extra);
+      return { base: series(base, 0), scen: series(monthly, oneTime), monthly, efName: ef.name, efTarget: ef.target, efBase: efMonths(base, 0), efScen: efMonths(monthly, oneTime) };
+    }
+    const GLOSSARY = {
+      'apr': ['APR', 'The yearly cost of borrowing, including some fees. Lower is better.'],
+      'apy': ['APY', 'What a savings account really earns in a year, with interest on interest included.'],
+      'principal': ['Principal', 'The amount you borrowed, not counting interest.'],
+      'interest': ['Interest', 'What the lender charges you for borrowing, on top of what you borrowed.'],
+      'precomputed': ['Precomputed interest', 'Interest is worked out up front for the whole loan, so paying early saves less than you\'d expect.'],
+      'prepayment penalty': ['Prepayment penalty', 'A fee for paying the loan off early.'],
+      'origination fee': ['Origination fee', 'A fee for setting up the loan. It\'s often taken out of the money you receive.'],
+      'amortiz': ['Amortization', 'Paying a loan off in equal monthly payments. Early payments are mostly interest.'],
+      'balloon': ['Balloon payment', 'A large lump sum due at the end of the loan. Make sure you can pay it.'],
+      'variable rate': ['Variable rate', 'Your rate can go up or down over time, so your payment can change.'],
+      'fixed rate': ['Fixed rate', 'Your rate stays the same for the whole loan.'],
+      'escrow': ['Escrow', 'Money the lender holds to pay your property tax and insurance for you.'],
+      'collateral': ['Collateral', 'Something you own that the lender can take if you stop paying, like the car.'],
+      'lien': ['Lien', 'The lender\'s legal claim on your property until the loan is paid off.'],
+      'grace period': ['Grace period', 'Extra time after a due date before you\'re charged a late fee or interest.'],
+      'minimum payment': ['Minimum payment', 'The smallest amount you can pay without a late fee. Paying only this keeps you in debt longer.'],
+      'compound': ['Compound interest', 'Interest charged on interest. It makes debt grow faster and savings grow faster.'],
+      'hard inquiry': ['Hard inquiry', 'A credit check when you apply for credit. It can lower your score a little for a while.'],
+      'utilization': ['Credit utilization', 'How much of your credit limit you\'re using. Under 30% is good, under 10% is great.'],
+      'overdraft': ['Overdraft', 'Spending more than you have. The bank may cover it and charge a fee.'],
+      'available balance': ['Available balance', 'What you can spend right now, after pending charges.'],
+      'pending': ['Pending', 'A charge that\'s approved but not final yet.'],
+      'ach': ['ACH', 'An electronic bank-to-bank transfer, like direct deposit or autopay.'],
+      'gap insurance': ['GAP insurance', 'Covers the difference if your car is totaled and you owe more than it\'s worth. Often optional.'],
+      'late fee': ['Late fee', 'A charge for paying after the due date.'],
+      'default': ['Default', 'Failing to repay as agreed. It can hurt your credit and lead to collections.'],
+      'co-signer': ['Co-signer', 'Someone who promises to pay if you don\'t. They\'re fully responsible too.'],
+      'refinanc': ['Refinancing', 'Replacing your loan with a new one, usually to get a lower rate or payment.'],
+      'debt-to-income': ['Debt-to-income (DTI)', 'Your monthly debt payments divided by your income. Lenders like it under 36%.'],
+      'term': ['Term', 'How long you have to pay the loan back.'],
+      'arbitration': ['Arbitration', 'Disputes go to a private arbitrator instead of court. You may give up the right to sue.']
+    };
+    function translate(text) {
+      const t = ' ' + String(text || '').toLowerCase().replace(/[’']/g, "'") + ' ';
+      const out = [];
+      for (const [k, v] of Object.entries(GLOSSARY)) {
+        const re = new RegExp('(^|[^a-z])' + k.replace(/[-]/g, '[- ]?'));
+        if (re.test(t)) out.push({ term: v[0], plain: v[1] });
+      }
+      return out;
+    }
+    // Port of trust_engine.py (team's TrustEngine) so scores match.
+    const SPONSOR = ['sponsored by', 'partnered with', 'use my link', 'affiliate link', 'exclusive discount', 'promo code', 'paid promotion'];
+    const HYPE = ['guaranteed return', 'risk-free', 'get rich quick', 'cant lose', 'to the moon', 'secret trick', 'loophole', 'generational wealth fast'];
+    function trust(text) {
+      const t = String(text || '').toLowerCase().replace(/[’']/g, '').replace(/risk free/g, 'risk-free').replace(/guaranteed returns/g, 'guaranteed return');
+      const sponsors = SPONSOR.filter((k) => t.includes(k)), hype = HYPE.filter((k) => t.includes(k));
+      let score = 100; if (sponsors.length) score -= 30; score -= hype.length * 20; score = Math.max(10, Math.min(100, score));
+      const level = score >= 80 ? 'Low bias' : score >= 50 ? 'Some promotion' : 'High risk';
+      const advice = score < 50 ? 'Be very careful. This has high-risk hype and/or a hidden reason to sell to you.'
+        : sponsors.length ? 'The author may get paid if you sign up. Check an independent source first.'
+          : 'Nothing obviously promotional or hyped. Still check where the claim comes from.';
+      return { score, level, sponsors, hype, advice };
+    }
+
     const defaultLimit = (cat) => round(monthlyAverage(cat), 10);
     const limitFor = (cat) => mem.budgets[cat] != null ? mem.budgets[cat] : defaultLimit(cat);
     const monthlyLimit = () => mem.monthlyLimit != null ? mem.monthlyLimit : round(sum(months.map((m) => spendOf({ month: m }).total)) / months.length, 100);
@@ -127,7 +267,7 @@
     }
 
     // ---------- understanding
-    function norm(s) { return ' ' + s.toLowerCase().replace(/[’']/g, "'").replace(/[^a-z0-9$&.,'\- ]+/g, ' ').replace(/\s+/g, ' ').trim() + ' '; }
+    function norm(s) { return ' ' + s.toLowerCase().replace(/[’']/g, "'").replace(/[^a-z0-9$&.,%'\- ]+/g, ' ').replace(/\s+/g, ' ').trim() + ' '; }
 
     function findCategory(t) {
       let best = null, bestLen = 0;
@@ -203,6 +343,11 @@
       memGoal: /\b(?:i'm|i am|im)\s+(?:saving|trying to save|putting money aside)\s+(?:up\s+)?for\s+(?:a |an |the |my )?([a-z][a-z \-]{1,30})/,
       memGoal2: /\bmy (?:goal|plan) is (?:to )?(?:buy |save for |get )?(?:a |an |the )?([a-z][a-z \-]{1,30})/,
       memRemember: /\b(?:remember|note|keep in mind|don't forget) (?:that )?(.{3,120})$/,
+      setCushion: /\b(cushion|buffer|safety net)\b/,
+      setSavings: /\b(save|saving|savings|put away)\b.*\b(a|per|each|every) month\b|\bmonthly savings\b/,
+      setScore: /\bmy (credit )?score is\b|\bset my (credit )?score\b/,
+      setChecking: /\b(my )?checking (balance )?(is|to)\b|\bset (my )?checking\b/,
+      loanAsk: /\b(loan|finance|financing|borrow)\b.*(\d|%)|\b\d[\d,.]*k?\s*(car|auto)? ?loan\b/,
       setBudget: /\b(?:set|make|change|put|update)\b.*\bbudget\b|\bbudget (?:for|of|on) .* (?:to|at|is|=) \$?\d|\blimit (?:for|on|of) .* (?:to|at) \$?\d|\bset (?:my )?(?:monthly )?(?:limit|budget)\b/,
       budget: /\b(budget|on track|over (my )?(limit|budget)|under (my )?(limit|budget)|overspen|over ?spend|limit)\b/,
       safe: /\b(safe to spend|safely spend|spendable|how much (money )?can i (safely )?spend|can i spend|left to spend|how much (do i have )?left|available to spend|free money|wiggle room)\b/,
@@ -234,7 +379,12 @@
       if (RX.memName.test(t) && !/my name is (jordan|mercer)\b/.test(t) || /^\s*(i'm|im|i am) [a-z]+\s*$/.test(t) && !/\b(broke|fine|good|ok|okay|tired|stressed|confused|back|here|new|sad|happy|worried|scared|anxious)\b/.test(t)) return 'name';
       if (RX.memGoal.test(t) || RX.memGoal2.test(t)) return 'goalSet';
       if (RX.memRemember.test(t)) return 'remember';
+      if (RX.setCushion.test(t) && ent.amount != null && /\b(set|make|change|is|to|keep|want)\b/.test(t)) return 'setCushion';
+      if (RX.setScore.test(t) && ent.amount != null) return 'setScore';
+      if (RX.setChecking.test(t) && ent.amount != null) return 'setChecking';
+      if (RX.setSavings.test(t) && ent.amount != null && /\b(set|make|change|want|going to|will|start|can)\b/.test(t)) return 'setSavings';
       if (RX.setBudget.test(t) && ent.amount != null) return 'setBudget';
+      if (RX.loanAsk.test(t) && ent.amount != null && ent.amount >= 1000) return 'loanCheck';
       if (RX.why.test(t)) return 'why';
       if (RX.more.test(t)) return 'more';
       if (ctx.pending && (ent.amount != null || RX.yes.test(t) || RX.no.test(t))) return 'pending';
@@ -280,7 +430,7 @@
     H.bye = () => R(`See you${mem.name ? ', ' + mem.name : ''}. I'll remember where we left off.`);
 
     H.balance = (e, t) => {
-      const c = D.accounts.checking, s = D.accounts.savings;
+      const c = sts().checking, s = D.accounts.savings;
       if (/\bsaving/.test(t) && !/\bcheck/.test(t)) return R(`Your savings ${D.accounts.savingsMask} has ${money(s)}.`, { basis: `Savings balance as of ${prettyDate(D.asOf)}, including monthly interest.`, actions: [{ label: 'See goals', ask: 'How are my savings goals doing?' }] });
       if (/\bcheck/.test(t) && !/\bsaving/.test(t)) return R(`Your checking ${D.accounts.checkingMask} has ${money(c)}.`, { basis: `Running balance after the last posted transaction on ${prettyDate(D.asOf)}.` });
       return R(`You have ${money(c + s)} in total: ${money(c)} in checking and ${money(s)} in savings.`, { basis: `Balances as of ${prettyDate(D.asOf)}, the last day of posted activity.`, actions: [{ label: 'What can I spend?', ask: 'How much can I safely spend?' }] });
@@ -416,9 +566,9 @@
     };
 
     H.safe = () => {
-      const s = D.safeToSpend;
+      const s = sts();
       setCtx('safe', {});
-      return R(`You can safely spend ${money(s.amount)} over the next 30 days.\nThat's your ${money(D.accounts.checking)} checking minus ${money(s.bills)} in upcoming bills, ${money(s.variable)} for everyday spending like groceries and gas, ${money(s.savings, false)} for savings and a ${money(s.buffer, false)} cushion. I don't count future paychecks, to stay safe.`,
+      return R(`You can safely spend ${money(s.amount)} over the next 30 days.\nThat's your ${money(s.checking)} checking minus ${money(s.bills)} in upcoming bills, ${money(s.variable)} for everyday spending like groceries and gas, ${money(s.savings, false)} for savings and a ${money(s.buffer, false)} cushion. I don't count future paychecks, to stay safe.`,
         { basis: 'Same calculation as the Safe-to-Spend Forecast in the team app.', actions: [{ label: 'Open Safe to spend', view: 'safe' }] });
     };
 
@@ -430,7 +580,7 @@
         return R(`Sure${item ? `, let's check the ${item}` : ''}. How much does it cost?`);
       }
       ctx.pending = null;
-      const s = D.safeToSpend.amount, after = s - amount;
+      const s = sts().amount, after = s - amount;
       setCtx('afford', { amount, item });
       const thing = item ? `the ${item}` : `${money(amount)}`;
       const g = goalNote();
@@ -464,8 +614,26 @@
       return R(`Done. Your monthly spending limit is now ${money(amount, false)}. September was ${money(sp)}, so that's ${sp > amount ? money(sp - amount) + ' over' : money(amount - sp) + ' under'}. I'll remember this.`, { actions: [{ label: 'Open Budget', view: 'budget' }] });
     };
 
-    H.credit = () => { setCtx('credit', {}); return R(`Your credit score isn't in the account data I can see, so I won't guess it. The 710 in the Credit score tool is a demo number for showing how scores work.\nWhat I can tell from your data: all ${plural(D.bills.filter((b) => b.priority === 'Essential').length, 'essential bill')} were paid on time every month, which is the biggest factor in a score.`, { actions: [{ label: 'Open Credit score', view: 'credit' }] }); };
-    H.loan = () => { setCtx('loan', {}); return R(`The SUV loan in Loan check is a sample contract for the demo, not one of your accounts. On it: $629/month for 72 months, about $9,320 in interest, plus an early payoff fee.\nYou already pay Toyota Financial ${money(318.75)} a month for a car loan, so a second payment would be a big jump.`, { actions: [{ label: 'Open Loan check', view: 'loan' }, { label: 'Am I ready to sign?', view: 'ready' }] }); };
+    const setNum = (k, v) => { mem.settings = Object.assign({}, mem.settings, { [k]: v }); save(); };
+    H.setCushion = (e) => { setNum('buffer', e.amount); setCtx('safe', {}); return R(`Done. I'll keep a ${money(e.amount, false)} cushion in checking. That makes your safe-to-spend ${money(sts().amount)}.`, { actions: [{ label: 'Open Money', view: 'safe' }] }); };
+    H.setSavings = (e) => { setNum('monthlySavings', e.amount); setCtx('safe', {}); return R(`Done. I'll set aside ${money(e.amount, false)} a month for savings. Your safe-to-spend is now ${money(sts().amount)}.`, { actions: [{ label: 'Open Money', view: 'safe' }] }); };
+    H.setChecking = (e) => { setNum('checking', e.amount); setCtx('balance', {}); return R(`Updated your checking to ${money(e.amount)} for the demo. Safe-to-spend is now ${money(sts().amount)}.`, { actions: [{ label: 'Open Money', view: 'safe' }] }); };
+    H.setScore = (e) => { if (e.amount < 300 || e.amount > 850) return R('Credit scores run from 300 to 850. What is yours?'); setNum('creditScore', e.amount); setCtx('credit', {}); return R(`Got it, your score is ${e.amount}. I'll use that in the Credit score tool.`, { actions: [{ label: 'Open Credit score', view: 'credit' }] }); };
+    H.loanCheck = (e, t) => {
+      const apr = parseFloat((t.match(/(\d+(?:\.\d+)?)\s*%/) || [])[1]);
+      const yrs = t.match(/(\d{1,2})\s*(?:years?|yrs?)\b/), mos = t.match(/(\d{2,3})\s*(?:months?|mos?)\b/);
+      const downM = t.match(/(\d[\d,]*)\s*(?:k\b)?\s*down\b|down(?: payment)? (?:of )?\$?(\d[\d,]*)/);
+      const L = { price: e.amount, apr: isFinite(apr) ? apr : 7, term: mos ? +mos[1] : yrs ? +yrs[1] * 12 : 60, down: downM ? parseFloat((downM[1] || downM[2]).replace(/,/g, '')) : 0, fees: 0, financed: false };
+      const d = decision(L); if (d.error) return R(d.error);
+      setCtx('loan', {});
+      const assumed = [isFinite(apr) ? null : '7% APR', mos || yrs ? null : '60 months'].filter(Boolean);
+      const worst = d.reasons.slice().sort((x, y) => (y.warn - x.warn) || (x.ok - y.ok));
+      return R(`${d.head}\nA ${money(L.price, false)} ${L.down ? `purchase with ${money(L.down, false)} down` : 'loan'} at ${L.apr}% for ${L.term} months is ${money(d.loan.payment)}/month and ${money(d.loan.interest, false)} in interest.\n` + worst.slice(0, 2).map((r) => '• ' + r.text).join('\n') + (assumed.length ? `\n(I assumed ${list(assumed)}. Change them in Decide.)` : ''),
+        { basis: 'Payment uses the same formula as the team calculator; debt and income are averages from your last 6 months.', loan: L, actions: [{ label: 'See full check', view: 'ready', loan: L }] });
+    };
+
+    H.credit = () => { setCtx('credit', {}); return R(`${mem.settings.creditScore ? `You told me your score is ${mem.settings.creditScore}.` : "Your credit score isn't in the account data I can see, so I won't guess it. The 710 in the Credit score tool is a demo number until you enter yours."}\nWhat I can tell from your data: all ${plural(D.bills.filter((b) => b.priority === 'Essential').length, 'essential bill')} were paid on time every month, which is the biggest factor in a score.`, { actions: [{ label: 'Open Credit score', view: 'credit' }] }); };
+    H.loan = () => { setCtx('loan', {}); return R(`Tell me the loan and I'll check it against your numbers, for example: "Can I handle a $25,000 car loan at 6.5% for 60 months?"\nYou already pay ${money(debtMonthly)} a month in loans (${list(debtBills.map((b) => b.payee))}), so I'll factor that in.`, { actions: [{ label: 'Open Loan check', view: 'loan' }] }); };
 
     H.urgent = () => { setCtx('help', {}); return R("That needs a person right away. Call FNB's Customer Contact Center at 800-555-5455 to lock your card or dispute a charge. I can't do that myself, and I won't pretend to.\nI'll pass along what we've talked about if you connect from Help.", { actions: [{ label: 'Open Help', view: 'help' }] }); };
     H.human = () => { setCtx('help', {}); return R(`Sure. I'll hand you to an FNB specialist with a summary of our chat, so you don't have to repeat yourself. You can also call 800-555-5455.`, { actions: [{ label: 'Talk to a person', view: 'help' }] }); };
@@ -579,7 +747,10 @@
     }
 
     return {
-      respond, suggestions, greeting, budgetStatus,
+      respond, suggestions, greeting, budgetStatus, sts, loanSummary, decision, whatIf, translate, trust,
+      setting: (k, d) => setting(k, d), setSetting: (k, v) => { setNum(k, v); }, resetSettings: () => { mem.settings = {}; mem.budgets = {}; mem.monthlyLimit = null; save(); },
+      setBudget: (cat, v) => { mem.budgets[cat] = v; save(); },
+      facts: () => ({ avgIncome, avgSpend, debtMonthly }),
       summary: () => ({ topic: ctx.intent ? topicLabel() : 'none yet', goals: mem.goals.slice(), recent: mem.history.filter((h) => h.from === 'me').slice(-3).map((h) => h.text) }),
       setMonthlyLimit(v) { mem.monthlyLimit = v; save(); },
       memory: () => JSON.parse(JSON.stringify({ name: mem.name, facts: mem.facts, goals: mem.goals, budgets: mem.budgets, monthlyLimit: mem.monthlyLimit })),

@@ -193,3 +193,38 @@ button { font: inherit; color: inherit; }
 .linkbtn { border: 0; background: none; padding: 4px 2px; color: var(--primary); font-size: 11.5px; text-decoration: underline; cursor: pointer; }
 
 .rise { animation: mRise .4s cubic-bezier(.2,.9,.2,1) both; }
+
+/* Editable numbers */
+.editnum { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); min-width: 0; }
+.editnum-l { font-size: 12px; color: var(--muted); }
+.editnum-box { display: inline-flex; align-items: center; gap: 2px; min-height: 44px; padding: 0 10px; border: 1px dashed var(--line); border-radius: 12px; background: var(--tile); transition: border-color .2s ease, box-shadow .2s ease; }
+.editnum-box:hover { border-color: var(--primary); }
+.editnum-box:focus-within { border-style: solid; border-color: var(--primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 20%, transparent); }
+.editnum input, .editnum select { width: 100%; min-width: 0; border: 0; outline: none; background: transparent; color: var(--ink); font: inherit; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 15px; padding: 0; }
+.editnum select { font-family: inherit; cursor: pointer; }
+.editnum-a { color: var(--muted); font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 14px; }
+.editnum-pen { color: var(--muted); font-size: 12px; margin-left: 4px; opacity: .7; }
+.editnum.lg input { font-size: 22px; } .editnum.lg .editnum-a { font-size: 20px; } .editnum.lg .editnum-box { min-height: 48px; }
+.editnum.sm { flex-direction: row; align-items: center; } .editnum.sm .editnum-box { min-height: 38px; max-width: 150px; } .editnum.sm input { text-align: right; }
+.editnum.xs { flex-direction: row; display: inline-flex; } .editnum.xs .editnum-box { min-height: 30px; padding: 0 6px; border-radius: 8px; max-width: 92px; } .editnum.xs input { font-size: 12.5px; }
+.check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink); min-height: 44px; }
+.check input { width: 18px; height: 18px; accent-color: var(--primary); }
+.src { display: inline-block; font-size: 10.5px; font-weight: 600; letter-spacing: .02em; padding: 1px 7px; border-radius: 999px; background: var(--chip); color: var(--muted); vertical-align: middle; }
+/* Decision */
+.verdict { display: flex; align-items: center; gap: 14px; padding: 16px 18px; border-radius: 20px; }
+.verdict.good { background: var(--goodBg); color: var(--goodInk); } .verdict.mid { background: var(--midBg); color: var(--midInk); } .verdict.bad { background: var(--badBg); color: var(--badInk); }
+.verdict .light { flex: 0 0 auto; width: 22px; height: 22px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 6px color-mix(in srgb, currentColor 18%, transparent); animation: mPulse 2s ease-in-out infinite; }
+@keyframes mPulse { 0%,100% { box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 18%, transparent); } 50% { box-shadow: 0 0 0 9px color-mix(in srgb, currentColor 8%, transparent); } }
+.reason { display: flex; gap: 10px; padding: 12px 0; border-top: 1px solid var(--line); }
+.ri { flex: 0 0 auto; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 800; }
+details.box summary { cursor: pointer; font-size: 13px; font-weight: 600; min-height: 28px; }
+.slider { display: flex; flex-direction: column; gap: 6px; }
+.slider input[type=range] { width: 100%; accent-color: var(--primary); min-height: 32px; }
+.m-toast { margin: 0 14px 8px; padding: 10px 14px; border-radius: 12px; background: var(--ink); color: var(--page); font-size: 13px; animation: mRise .35s cubic-bezier(.2,.9,.2,1) both; }
+.dot-v { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; } .dot-v.good { background: var(--goodBar); } .dot-v.mid { background: #EAB308; } .dot-v.bad { background: var(--badBar); }
+
+/* iPhone zooms into inputs under 16px; keep them at 16px on phones */
+@media (max-width: 640px), (pointer: coarse) { .m-input input, .field input, .field textarea, .editnum input, .editnum select { font-size: 16px !important; } }
+.editnum-a, .row .mono, .row > span:last-child { white-space: nowrap; }
+.editnum.sm .editnum-box { max-width: 170px; }
+.row > span:first-child { min-width: 0; }

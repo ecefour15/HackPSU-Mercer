@@ -31,11 +31,26 @@ Everything fits on one line, no scrolling:
 **Chat · Money · Decide · More ▾ · Help**
 
 - **Money:** Safe to spend (with upcoming bills) | Budget (green/red + pixel face)
-- **Decide:** Afford it? (live check against safe-to-spend) | Loan check | Ready to sign? | What if
-- **More ▾:** Credit score, Next steps, Translate, Legit check
+- **Decide:**
+  - **Afford it?** live check against safe-to-spend.
+  - **Loan check** calculator: same formulas as the team's `Calculators.py` (payment, interest, true APR with fees).
+  - **Ready to sign?** Go / Wait / Rethink verdict from the customer's own numbers, every reason tagged
+    *From your data*, *Estimate* or *From the loan terms*, plus suggested changes that were each tested to
+    improve the verdict.
+  - **What if** sliders with a 5-year savings chart.
+- **More ▾:** Credit score, Next steps, Translate (30+ term glossary, offline), Legit check (same scoring as `trust_engine.py`)
 - **Help:** talk to a person (Mercer passes along a summary so you don't repeat yourself), FNB's published
   Customer Contact Center numbers, branch finder. Saying "I lost my card" or "a charge I didn't make" in chat
   sends you here immediately; Mercer won't pretend it can lock cards or file disputes.
+
+## Everything is editable
+
+Every number with a ✎ can be tapped and changed: checking balance, monthly savings, cushion, monthly limit,
+each category limit, credit score, and every loan field. Changes update the bank page, the chat and every tool,
+and are remembered on the device. **Help → Reset the demo** puts everything back.
+
+The chat can change numbers too: "set my cushion to $300", "I want to save $800 a month", "my credit score is 680",
+"can I handle a $25,000 car loan at 6.5% for 60 months?" (opens the full check).
 
 ## How the chat works
 
