@@ -6,7 +6,7 @@ A popup AI money guide on top of a First National Bank page, in two versions:
 |---|---|
 | `index.html` | Website: accounts page + "Ask Mercer" popup |
 | `phone.html` | Mobile app: floating Mercer button that opens/collapses the chat |
-| `mercer.js` / `mercer.css` | The assistant UI, shared by both pages (11 tools, chat, light/dark mode) |
+| `mercer.js` / `mercer.css` | The assistant UI, shared by both pages (tabs, chat, light/dark mode) |
 | `brain.js` | Mercer's brain: understands questions, answers from the data, remembers |
 | `data.js` | Mercer's database, generated from the team's synthetic dataset |
 | `build_data.py` | Regenerates `data.js` (run from repo root: `python3 frontend/build_data.py`, needs pandas + openpyxl) |
@@ -23,6 +23,19 @@ open frontend/index.html
 
 Works offline. Shareable link: turn on GitHub Pages (Settings → Pages → main, / root), then
 `https://ecefour15.github.io/HackPSU-Team-LARP-/frontend/phone.html`.
+
+## Tabs
+
+Everything fits on one line, no scrolling:
+
+**Chat · Money · Decide · More ▾ · Help**
+
+- **Money:** Safe to spend (with upcoming bills) | Budget (green/red + pixel face)
+- **Decide:** Afford it? (live check against safe-to-spend) | Loan check | Ready to sign? | What if
+- **More ▾:** Credit score, Next steps, Translate, Legit check
+- **Help:** talk to a person (Mercer passes along a summary so you don't repeat yourself), FNB's published
+  Customer Contact Center numbers, branch finder. Saying "I lost my card" or "a charge I didn't make" in chat
+  sends you here immediately; Mercer won't pretend it can lock cards or file disputes.
 
 ## How the chat works
 

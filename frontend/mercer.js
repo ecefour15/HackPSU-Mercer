@@ -36,19 +36,35 @@
   };
 
   // ---------- demo data ----------
-  const TOOLS = [
-    ['home', 'Chat', ''],
-    ['safe', 'Safe to spend', 'What you can spend this month'],
-    ['budget', 'Budget', 'Monthly limits: green or red'],
-    ['credit', 'Credit score', 'Your score and how to raise it'],
-    ['loan', 'Loan check', 'Fees, penalties, real cost'],
-    ['ready', 'Ready to sign?', 'Second opinion + gut check'],
-    ['afford', 'Can I afford it?', 'Check a purchase first'],
-    ['whatif', 'What if…', 'See 5 years ahead'],
-    ['translate', 'Translate', 'Bank-speak to plain English'],
-    ['legit', 'Legit check', 'Spot hype and paid promos'],
-    ['next', 'Next step', 'One small task at a time']
+  // Tabs: 3 main ones that fit on one line, a "More" menu, then Help (customer care) last.
+  const MAIN_TABS = [['home', 'Chat'], ['money', 'Money'], ['decide', 'Decide']];
+  const MORE_TABS = [['credit', 'Credit score'], ['next', 'Next steps'], ['translate', 'Translate'], ['legit', 'Legit check']];
+  const VIEW_INFO = {
+    home: ['Chat', ''],
+    money: ['Money', 'What you can spend, budget and bills'],
+    decide: ['Decide', 'Check it before you commit'],
+    credit: ['Credit score', 'Your score and how to raise it'],
+    next: ['Next steps', 'One small task at a time'],
+    translate: ['Translate', 'Bank-speak to plain English'],
+    legit: ['Legit check', 'Spot hype and paid promos'],
+    help: ['Help', 'Talk to a person · FNB phone numbers']
+  };
+  const SUBS = {
+    money: [['safe', 'Safe to spend'], ['budget', 'Budget']],
+    decide: [['afford', 'Afford it?'], ['loan', 'Loan check'], ['ready', 'Ready?'], ['whatif', 'What if']]
+  };
+  // Old view names (used by chat actions) -> [tab, sub-tab]
+  const ALIAS = { safe: ['money', 'safe'], budget: ['money', 'budget'], afford: ['decide', 'afford'], loan: ['decide', 'loan'], ready: ['decide', 'ready'], whatif: ['decide', 'whatif'] };
+  const HOME_TILES = [
+    ['money', 'Money', 'What you can spend, budget, bills'],
+    ['decide', 'Decide', 'Afford it? Ready to sign?'],
+    ['credit', 'Credit score', 'How to raise it'],
+    ['next', 'Next steps', 'One small task at a time'],
+    ['translate', 'Translate', 'Bank-speak, plain English'],
+    ['help', 'Talk to a person', 'FNB customer care']
   ];
+  // F.N.B. Customer Contact Center numbers, as published on fnb-online.com/privacy
+  const CARE = { main: '800-555-5455', mainTel: '+18005555455', vanity: '833-BANK-FNB', vanityTel: '+18332265362', branches: 'https://locations.fnb-online.com/' };
   const FEELINGS = [['excited', 'Excited'], ['calm', 'Calm'], ['pressured', 'Pressured'], ['anxious', 'Anxious'], ['confident', 'Confident'], ['fomo', 'Afraid to miss out']];
   const SCENARIOS = {
     car: { label: 'Buy the SUV', value: '[AMOUNT]', note: 'Slower growth: $629 a month goes to the car instead.' },
@@ -97,11 +113,19 @@
         view: 'home', draft: '', typing: false,
         msgs: this.brain.history(), greeting: this.brain.greeting(), suggestions: this.brain.suggestions(),
         picked: { excited: true, pressured: true }, scen: 'car', done: { 1: true },
-        credit: {}, aiMode: false, tick: 0
+        credit: {}, aiMode: false, tick: 0, sub: { money: 'safe', decide: 'afford' }, menu: false, handoff: false
       };
       this.timer = null;
     }
-    componentDidMount() { this.applyTheme(); }
+    componentDidMount() {
+      this.applyTheme();
+      this.onDoc = (e) => {
+        if (!this.state.menu) return;
+        if (e.type === 'keydown' ? e.key === 'Escape' : !(e.target.closest && e.target.closest('.m-more'))) this.setState({ menu: false });
+      };
+      document.addEventListener('click', this.onDoc, true);
+      document.addEventListener('keydown', this.onDoc);
+    }
     componentDidUpdate(prevProps, prevState) {
       this.applyTheme();
       if (prevState.view !== this.state.view || (!prevState.open && this.state.open)) {
@@ -113,7 +137,7 @@
         if (this.body && this.state.view === 'home') this.body.scrollTop = this.body.scrollHeight;
       }
     }
-    componentWillUnmount() { clearTimeout(this.timer); }
+    componentWillUnmount() { clearTimeout(this.timer); document.removeEventListener('click', this.onDoc, true); document.removeEventListener('keydown', this.onDoc); }
     applyTheme() { document.documentElement.dataset.theme = this.state.dark ? 'dark' : 'light'; }
 
     sessionId() {
@@ -169,7 +193,53 @@
     }
     act(a) { if (a.view) this.go(a.view); else if (a.ask) this.ask(a.ask); }
     forget() { const r = this.brain.forget(); this.setState({ msgs: [], greeting: this.brain.greeting(), suggestions: this.brain.suggestions(), tick: this.state.tick + 1 }); return r; }
-    go(view) { this.setState({ view }); }
+    go(view) {
+      const a = ALIAS[view];
+      if (a) this.setState({ view: a[0], sub: Object.assign({}, this.state.sub, { [a[0]]: a[1] }), menu: false });
+      else this.setState({ view, menu: false });
+    }
+    setSub(tab, sub) { this.setState({ sub: Object.assign({}, this.state.sub, { [tab]: sub }) }); }
+    segmented(tab) {
+      const cur = this.state.sub[tab];
+      return html`<div class="seg" role="tablist" aria-label=${VIEW_INFO[tab][0]}>
+        ${SUBS[tab].map(([id, label]) => html`<button key=${id} type="button" role="tab" aria-selected=${cur === id ? 'true' : 'false'} class="seg-btn" onClick=${() => this.setSub(tab, id)}>${label}</button>`)}
+      </div>`;
+    }
+    viewMoney() {
+      const sub = this.state.sub.money;
+      return html`<div class="stack">${this.segmented('money')}<div key=${sub} class="m-view">${sub === 'budget' ? this.viewBudget() : this.viewSafe()}</div></div>`;
+    }
+    viewDecide() {
+      const sub = this.state.sub.decide;
+      const body = { afford: () => this.viewAfford(), loan: () => this.viewLoan(), ready: () => this.viewReady(), whatif: () => this.viewWhatIf() }[sub]();
+      return html`<div class="stack">${this.segmented('decide')}<div key=${sub} class="m-view">${body}</div></div>`;
+    }
+    viewHelp() {
+      const s = this.state, m = this.brain.memory(), sum = this.brain.summary();
+      return html`<div class="stack">
+        <div class="box stack" style="gap:10px;padding:18px">
+          <p style="margin:0;font-weight:700;font-size:16px">Talk to a person</p>
+          <p class="muted" style="margin:0;font-size:13.5px">A specialist sees what you've already told ${'Mercer'}, so you never start over.</p>
+          ${!s.handoff
+            ? html`<button type="button" class="btn" onClick=${() => this.setState({ handoff: true })}>Connect me with a specialist</button>`
+            : html`<div class="note ok rise" style="display:flex;flex-direction:column;gap:6px">
+                <p style="font-weight:700">Request sent. Here's what the specialist will see:</p>
+                <p>• Customer: ${m.name || window.MERCER_DATA.person.name.split(' ')[0]}</p>
+                <p>• Last topic: ${sum.topic}</p>
+                ${sum.goals.length > 0 && html`<p>• Saving for: ${sum.goals.join(', ')}</p>`}
+                ${sum.recent.length > 0 && html`<p>• Recent questions: ${sum.recent.map((q) => '"' + q + '"').join(', ')}</p>`}
+                <p style="font-size:12px;opacity:.8;margin-top:4px">Demo: this concept doesn't contact a real agent. Call the number below to reach FNB.</p>
+              </div>`}
+        </div>
+        <div class="box" style="padding:4px 16px">
+          <a class="care-row" href=${'tel:' + CARE.mainTel}><span><b>Call FNB Customer Contact Center</b><span class="muted">Accounts, cards, anything else</span></span><span class="mono">${CARE.main}</span></a>
+          <a class="care-row" href=${'tel:' + CARE.vanityTel}><span><b>Call ${CARE.vanity}</b><span class="muted">Same team, easy to remember</span></span><span class="mono">1-833-226-5362</span></a>
+          <a class="care-row" href=${CARE.branches} target="_blank" rel="noopener"><span><b>Find a branch or ATM</b><span class="muted">Opens FNB's locations page</span></span><span aria-hidden="true">↗</span></a>
+        </div>
+        <div class="note warn" style="font-size:13.5px"><strong>Lost card or a charge you didn't make?</strong> Call ${CARE.main} now. ${'Mercer'} can't lock cards or file disputes, and won't pretend to.</div>
+        <p class="muted" style="margin:0;font-size:11.5px;text-align:center">Numbers from FNB's website (fnb-online.com). Check the back of your card too.</p>
+      </div>`;
+    }
 
     // ---------- views ----------
     viewHome(botName) {
@@ -185,7 +255,7 @@
         ${!remembers && !s.typing && html`
           <p class="kicker">Tools</p>
           <div class="grid2">
-            ${TOOLS.slice(1).map(([id, label, desc]) => html`<button key=${id} type="button" class="tile" onClick=${() => this.go(id)}><b>${label}</b><span>${desc}</span></button>`)}
+            ${HOME_TILES.map(([id, label, desc]) => html`<button key=${id} type="button" class="tile" onClick=${() => this.go(id)}><b>${label}</b><span>${desc}</span></button>`)}
           </div>`}
         <p class="m-memory muted">
           ${remembers ? 'Remembers your chats on this device' : 'Answers from your account data · remembers what you tell it'}${s.aiMode ? ' · AI on' : ''}
@@ -322,7 +392,7 @@
           <p style="margin:0;font-weight:600">Add-ons rolled into the loan</p>
           <p class="muted" style="margin:0;font-size:13.5px">GAP insurance and a service plan. You pay interest on them too.</p>
         </div>
-        <button type="button" class="btn" onClick=${() => this.go('ready')}>Am I ready to sign?</button>
+        <button type="button" class="btn" onClick=${() => this.setSub('decide', 'ready')}>Am I ready to sign?</button>
       </div>`;
     }
 
@@ -351,8 +421,8 @@
             ${FEELINGS.map(([id, label]) => html`<button key=${id} type="button" class="pill" aria-pressed=${p[id] ? 'true' : 'false'}
               onClick=${() => this.setState({ picked: Object.assign({}, p, { [id]: !p[id] }) })}>${label}</button>`)}
           </div>
-          ${rushed && html`<p class="note warn msg" style="padding:10px 12px;border-radius:12px">Sounds rushed. Good deals come back. Sleep on it?</p>`}
-          ${steady && html`<p class="note ok msg" style="padding:10px 12px;border-radius:12px">Sounds like a considered decision.</p>`}
+          ${rushed && html`<p class="note warn rise" style="padding:10px 12px;border-radius:12px">Sounds rushed. Good deals come back. Sleep on it?</p>`}
+          ${steady && html`<p class="note ok rise" style="padding:10px 12px;border-radius:12px">Sounds like a considered decision.</p>`}
         </div>
         <div style="display:flex;gap:8px">
           <button type="button" class="btn" style="flex:1">Remind me tomorrow</button>
@@ -362,13 +432,26 @@
     }
 
     viewAfford() {
+      const D = window.MERCER_DATA, safe = D.safeToSpend.amount;
+      const item = this.state.affordItem != null ? this.state.affordItem : 'Headphones';
+      const raw = this.state.affordPrice != null ? this.state.affordPrice : '249';
+      const price = parseFloat(String(raw).replace(/[^0-9.]/g, ''));
+      const ok = isFinite(price) && price > 0;
+      const thing = (item.trim() || 'it').toLowerCase();
+      const after = safe - (ok ? price : 0);
+      const goal = (this.brain.memory().goals || []).slice(-1)[0];
+      let tone = 'good', head = '', body = '';
+      if (ok && price <= safe * 0.5) { head = `Yes, you can afford the ${thing}.`; body = `You'd still have ${fmt(after)} safe to spend in the next 30 days.${goal ? ` It won't slow down your ${goal} fund.` : ''}`; }
+      else if (ok && price <= safe) { tone = 'mid'; head = 'You can, but it\'s a big chunk.'; body = `It uses ${Math.round(price / safe * 100)}% of your ${fmt(safe)} safe-to-spend, leaving ${fmt(after)}. Waiting until your Oct 15 paycheck is safer.`; }
+      else if (ok) { tone = 'bad'; head = 'Not comfortably.'; body = `That's ${fmt(price - safe)} more than you can safely spend right now (${fmt(safe)}). You'd have to dip into savings or wait a paycheck or two.`; }
       return html`<div class="stack">
-        <label class="field">What are you buying?<input type="text" value="Headphones" /></label>
-        <label class="field">Price<input type="text" value="$249" /></label>
-        <div class="note good msg" style="border-radius:18px;padding:16px">
-          <p style="font-weight:600">Yes, you can afford it.</p>
-          <p style="margin-top:4px;font-size:13.5px">It pushes your emergency fund back about 2 weeks. You'd have $432.77 left this month.</p>
-        </div>
+        <label class="field">What are you buying?<input type="text" value=${item} onInput=${(e) => this.setState({ affordItem: e.target.value })} /></label>
+        <label class="field">Price<input type="text" inputmode="decimal" value=${raw} onInput=${(e) => this.setState({ affordPrice: e.target.value })} /></label>
+        ${ok ? html`<div key=${tone} class=${'note rise ' + tone} style="border-radius:18px;padding:16px">
+            <p style="font-weight:700">${head}</p>
+            <p style="margin-top:4px;font-size:13.5px">${body}</p>
+          </div>` : html`<p class="muted" style="margin:0;font-size:13.5px">Enter a price to check it.</p>`}
+        <p class="muted" style="margin:0;font-size:12px">Checked against your safe-to-spend of ${fmt(safe)}: checking minus bills, everyday spending, savings and a cushion.</p>
       </div>`;
     }
 
@@ -379,7 +462,7 @@
         <div style="display:flex;flex-wrap:wrap;gap:6px">
           ${Object.keys(SCENARIOS).map((id) => html`<button key=${id} type="button" class="pill" aria-pressed=${sc === id ? 'true' : 'false'} onClick=${() => this.setState({ scen: id })}>${SCENARIOS[id].label}</button>`)}
         </div>
-        <div key=${sc} class="box msg" style="display:block;padding:18px">
+        <div key=${sc} class="box rise" style="display:block;padding:18px">
           <p class="muted" style="margin:0;font-size:13px">Savings in 5 years</p>
           <p class="mono" style="margin:2px 0 0;font-size:34px;letter-spacing:-.02em">${SCENARIOS[sc].value}</p>
           <p style="margin:6px 0 0;font-size:13.5px">${SCENARIOS[sc].note}</p>
@@ -390,7 +473,7 @@
     viewTranslate() {
       return html`<div class="stack">
         <label class="field">Paste the confusing part<textarea rows="3">Interest accrues on a precomputed basis. A prepayment penalty may apply.</textarea></label>
-        <div class="box stack msg" style="gap:10px">
+        <div class="box stack rise" style="gap:10px">
           <p style="margin:0"><strong>"Precomputed basis"</strong> means the interest is worked out up front. Paying early saves less than you'd think.</p>
           <p style="margin:0"><strong>"Prepayment penalty"</strong> is a fee for paying the loan off early.</p>
         </div>
@@ -400,7 +483,7 @@
     viewLegit() {
       return html`<div class="stack">
         <label class="field">Paste a post, video script or tip<textarea rows="3">This app gives guaranteed returns, totally risk-free. Use my link for a bonus!</textarea></label>
-        <div class="note warn msg" style="border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:6px">
+        <div class="note warn rise" style="border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:6px">
           <p style="font-weight:700">Be careful</p>
           <p style="font-size:13.5px">No investment is "guaranteed" or "risk-free". That's hype.</p>
           <p style="font-size:13.5px">"Use my link" means they get paid when you sign up.</p>
@@ -428,13 +511,13 @@
     render(props, s) {
       const botName = props.botName || 'Mercer';
       const phone = props.mode === 'phone';
-      const current = TOOLS.find((t) => t[0] === s.view) || TOOLS[0];
+      const current = [null].concat(VIEW_INFO[s.view] || VIEW_INFO.home);
+      const inMore = MORE_TABS.some((t) => t[0] === s.view);
       const atHome = s.view === 'home';
       const views = {
-        home: () => this.viewHome(botName), safe: () => this.viewSafe(), budget: () => this.viewBudget(),
-        credit: () => this.viewCredit(), loan: () => this.viewLoan(), ready: () => this.viewReady(),
-        afford: () => this.viewAfford(), whatif: () => this.viewWhatIf(), translate: () => this.viewTranslate(),
-        legit: () => this.viewLegit(), next: () => this.viewNext()
+        home: () => this.viewHome(botName), money: () => this.viewMoney(), decide: () => this.viewDecide(),
+        credit: () => this.viewCredit(), next: () => this.viewNext(), translate: () => this.viewTranslate(),
+        legit: () => this.viewLegit(), help: () => this.viewHelp()
       };
       const close = () => this.setState({ open: false });
       const open = () => this.setState({ open: true });
@@ -466,7 +549,16 @@
             <button type="button" class="m-icon" aria-label=${'Close ' + botName} onClick=${close}>${Icon.close()}</button>
           </div>
           <div class="m-rail" ref=${(el) => { this.rail = el; }}>
-            ${TOOLS.map(([id, label]) => html`<button key=${id} type="button" class="pill" aria-pressed=${s.view === id ? 'true' : 'false'} onClick=${() => this.go(id)}>${label}</button>`)}
+            ${MAIN_TABS.map(([id, label]) => html`<button key=${id} type="button" class="pill" aria-pressed=${s.view === id ? 'true' : 'false'} onClick=${() => this.go(id)}>${label}</button>`)}
+            <div class="m-more">
+              <button type="button" class="pill" aria-haspopup="menu" aria-expanded=${s.menu ? 'true' : 'false'} aria-pressed=${inMore ? 'true' : 'false'}
+                onClick=${() => this.setState({ menu: !s.menu })}>${inMore ? VIEW_INFO[s.view][0] : 'More'} <span class="chev" aria-hidden="true">▾</span></button>
+              ${s.menu && html`<div class="m-menu" role="menu">
+                ${MORE_TABS.map(([id, label]) => html`<button key=${id} type="button" role="menuitem" class=${'m-menu-item' + (s.view === id ? ' on' : '')} onClick=${() => this.go(id)}>
+                  <b>${label}</b><span class="muted">${VIEW_INFO[id][1]}</span></button>`)}
+              </div>`}
+            </div>
+            <button type="button" class="pill help-pill" aria-pressed=${s.view === 'help' ? 'true' : 'false'} onClick=${() => this.go('help')}>Help</button>
           </div>
           <div class="m-divider"></div>
           <div class="m-body" ref=${(el) => { this.body = el; }}><div key=${s.view} class="m-view">${views[s.view]()}</div></div>

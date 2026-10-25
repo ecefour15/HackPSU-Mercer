@@ -196,6 +196,8 @@
       bye: /\b(bye|goodbye|see you|cya|that's all|thats all)\b/,
       who: /\b(who are you|what are you|your name|what can you do|help me|^ ?help ?$|what do you do|how do you work)\b/,
       memRecall: /\b(what do you (remember|know) about me|what have i told you|do you remember( me)?|what('s| is) my name|who am i)\b/,
+      urgent: /\b(lost (my )?(debit |credit )?card|stolen|card (is )?missing|fraud|unauthori[sz]ed|didn'?t (make|authori[sz]e|recogni[sz]e)|don'?t recogni[sz]e|not my (charge|purchase)|wrong charge|charged twice|double charged|scam(med)?|someone (used|took|stole)|hacked|identity theft)\b/,
+      human: /\b(human|real person|actual person|agent|representative|customer (service|care|support)|talk to (someone|a person|somebody)|speak (to|with) (someone|a person)|call (the )?bank|contact (fnb|the bank|you guys)|support team|complain|complaint)\b/,
       memForget: /\b(forget (everything|it all|all|me|that|about)|clear (my )?(memory|history|chat)|reset( everything)?|delete my data)\b/,
       memName: /\b(?:my name is|call me|i'm called|you can call me)\s+([a-z][a-z\-]{1,20})\b/,
       memGoal: /\b(?:i'm|i am|im)\s+(?:saving|trying to save|putting money aside)\s+(?:up\s+)?for\s+(?:a |an |the |my )?([a-z][a-z \-]{1,30})/,
@@ -225,6 +227,8 @@
     };
 
     function classify(t, ent) {
+      if (RX.urgent.test(t)) return 'urgent';
+      if (RX.human.test(t)) return 'human';
       if (RX.memForget.test(t)) return 'forget';
       if (RX.memRecall.test(t)) return 'recall';
       if (RX.memName.test(t) && !/my name is (jordan|mercer)\b/.test(t) || /^\s*(i'm|im|i am) [a-z]+\s*$/.test(t) && !/\b(broke|fine|good|ok|okay|tired|stressed|confused|back|here|new|sad|happy|worried|scared|anxious)\b/.test(t)) return 'name';
@@ -463,6 +467,9 @@
     H.credit = () => { setCtx('credit', {}); return R(`Your credit score isn't in the account data I can see, so I won't guess it. The 710 in the Credit score tool is a demo number for showing how scores work.\nWhat I can tell from your data: all ${plural(D.bills.filter((b) => b.priority === 'Essential').length, 'essential bill')} were paid on time every month, which is the biggest factor in a score.`, { actions: [{ label: 'Open Credit score', view: 'credit' }] }); };
     H.loan = () => { setCtx('loan', {}); return R(`The SUV loan in Loan check is a sample contract for the demo, not one of your accounts. On it: $629/month for 72 months, about $9,320 in interest, plus an early payoff fee.\nYou already pay Toyota Financial ${money(318.75)} a month for a car loan, so a second payment would be a big jump.`, { actions: [{ label: 'Open Loan check', view: 'loan' }, { label: 'Am I ready to sign?', view: 'ready' }] }); };
 
+    H.urgent = () => { setCtx('help', {}); return R("That needs a person right away. Call FNB's Customer Contact Center at 800-555-5455 to lock your card or dispute a charge. I can't do that myself, and I won't pretend to.\nI'll pass along what we've talked about if you connect from Help.", { actions: [{ label: 'Open Help', view: 'help' }] }); };
+    H.human = () => { setCtx('help', {}); return R(`Sure. I'll hand you to an FNB specialist with a summary of our chat, so you don't have to repeat yourself. You can also call 800-555-5455.`, { actions: [{ label: 'Talk to a person', view: 'help' }] }); };
+
     // ---------- memory intents
     H.name = (e, t) => {
       const m = t.match(RX.memName) || t.match(/^\s*(?:i'm|im|i am) ([a-z]+)\s*$/);
@@ -532,7 +539,7 @@
       const e = ctx.ent || {};
       const what = e.merchant || (e.category && e.category.toLowerCase());
       const when = e.month && e.month !== 'all' ? ' in ' + monthName(e.month) : '';
-      return ({ spend: (what ? 'your ' + what + ' spending' : 'your spending') + when, budget: 'your budget', bills: 'your upcoming bills', savings: 'your savings goals', safe: 'what you can safely spend', afford: e.item ? 'whether you can afford the ' + e.item : 'a purchase you were considering', income: 'your income', subs: 'your subscriptions', top: 'where your money goes', credit: 'your credit score', loan: 'the SUV loan', transactions: 'your recent transactions', biggest: 'your biggest purchases' })[ctx.intent] || 'your finances';
+      return ({ spend: (what ? 'your ' + what + ' spending' : 'your spending') + when, budget: 'your budget', bills: 'your upcoming bills', savings: 'your savings goals', safe: 'what you can safely spend', afford: e.item ? 'whether you can afford the ' + e.item : 'a purchase you were considering', income: 'your income', subs: 'your subscriptions', top: 'where your money goes', credit: 'your credit score', loan: 'the SUV loan', help: 'getting help from a person', transactions: 'your recent transactions', biggest: 'your biggest purchases' })[ctx.intent] || 'your finances';
     }
 
     // ---------- public API
@@ -573,6 +580,7 @@
 
     return {
       respond, suggestions, greeting, budgetStatus,
+      summary: () => ({ topic: ctx.intent ? topicLabel() : 'none yet', goals: mem.goals.slice(), recent: mem.history.filter((h) => h.from === 'me').slice(-3).map((h) => h.text) }),
       setMonthlyLimit(v) { mem.monthlyLimit = v; save(); },
       memory: () => JSON.parse(JSON.stringify({ name: mem.name, facts: mem.facts, goals: mem.goals, budgets: mem.budgets, monthlyLimit: mem.monthlyLimit })),
       history: () => mem.history.slice(),
