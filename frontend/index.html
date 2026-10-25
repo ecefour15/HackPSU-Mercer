@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>First National Bank · Mercer (concept)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="mercer.css">
+  <style>
+    .bank-top { background: var(--navy); color: #fff; }
+    .bank-top .in { max-width: 1200px; margin: 0 auto; padding: 0 32px; min-height: 68px; display: flex; flex-wrap: wrap; align-items: center; gap: 28px; }
+    .bank-top nav { display: flex; gap: 22px; flex: 1 1 auto; font-size: 14px; }
+    .bank-top a { color: #D6E0EE; text-decoration: none; }
+    .bank-top a[aria-current] { color: #fff; font-weight: 600; }
+    .stripe { height: 4px; background: var(--crimson); }
+    main { max-width: 1200px; margin: 0 auto; padding: 36px 32px 140px; display: flex; flex-direction: column; gap: 24px; }
+    .accounts { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+    .accounts .card { padding: 22px; }
+    .accounts p { margin: 0; }
+    @media (max-width: 640px) { .bank-top .in, main { padding-left: 16px; padding-right: 16px; } }
+  </style>
+</head>
+<body class="t">
+  <header class="bank-top">
+    <div class="in">
+      <strong style="font-size:19px;letter-spacing:-.01em">First National Bank</strong>
+      <nav aria-label="Bank" class="hide-sm">
+        <a href="#" aria-current="page">Accounts</a><a href="#">Transfer</a><a href="#">Pay bills</a><a href="#">Loans</a>
+      </nav>
+      <span style="font-size:12px;background:rgba(255,255,255,.14);padding:5px 10px;border-radius:999px">Concept · HackPSU</span>
+    </div>
+    <div class="stripe"></div>
+  </header>
+
+  <main>
+    <div>
+      <p class="muted" style="margin:0;font-size:14px">Good evening</p>
+      <h1 style="margin:2px 0 0;font-size:30px;letter-spacing:-.02em">Your accounts</h1>
+    </div>
+    <div class="accounts">
+      <div class="card"><p class="muted" style="font-size:13px">Checking ••4417</p><p class="mono" style="margin-top:6px;font-size:28px">$3,412.18</p></div>
+      <div class="card"><p class="muted" style="font-size:13px">Savings ••0921</p><p class="mono" style="margin-top:6px;font-size:28px">[BALANCE]</p></div>
+      <div class="card"><p class="muted" style="font-size:13px">Credit card ••8830</p><p class="mono" style="margin-top:6px;font-size:28px">[BALANCE]</p></div>
+    </div>
+    <section class="card" style="padding:8px 22px;max-width:720px">
+      <h2 style="margin:14px 0 6px;font-size:16px">Recent activity</h2>
+      <div class="row"><span>Greenwood Apartments · Rent</span><span class="mono">−$1,475.00</span></div>
+      <div class="row"><span>PECO Energy · Autopay</span><span class="mono">−$105.41</span></div>
+    </section>
+  </main>
+
+  <div id="mercer"></div>
+
+  <script src="https://unpkg.com/preact@10.24.3/dist/preact.umd.js"></script>
+  <script src="https://unpkg.com/htm@3.1.1/dist/htm.umd.js"></script>
+  <script src="mercer.js"></script>
+  <script>Mercer.mount(document.getElementById('mercer'), { mode: 'web', botName: 'Mercer' });</script>
+</body>
+</html>
